@@ -10,6 +10,7 @@
 
 2. Netflix Datasets
 /media/work/Workspace/DataSets/Netflix/
+/media/work/Workspace/DataSets/Netflix_Original/training_set
 
 3. Yahoo!Movies Datasets
 /media/work/Workspace/DataSets/Yahoo/YahooMovies/
