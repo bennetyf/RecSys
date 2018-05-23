@@ -1,0 +1,8 @@
+Rawdata column names:
+
+['reviewerID' 'asin' 'reviewerName' 'helpful' 'reviewText' 'overall'
+ 'summary' 'unixReviewTime' 'reviewTime']
+
+Catogery names:
+Amazon_Instant_Video
+Apps_for_Android
