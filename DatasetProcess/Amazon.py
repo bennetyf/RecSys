@@ -131,12 +131,31 @@ def CrossDomainStats(spath, tpath, domain1, domain2, sel, chunksize=10**6):
 
     elif sel == 'item':
         # Summarize the shared items in the two nominated domains
+
         return 0
 
     elif sel == 'none':
         # Summarize the part which both users and items do not overlap
 
         return 0
+
+# Generate the data for CoNet
+
+def CoNetData(path, domain1, domain2, chunksize=10**6):
+    # Read the user data into the memory
+    res1 = pd.DataFrame([])
+    for df in pd.read_csv(path + domain1 + '_and_' + domain2 + '_ratings_1.csv', names=['uid', 'iid', 'ratings','time'], chunksize=chunksize):
+        df['ratings'] = df['ratings'].map({1:0, 2:0, 3:0, 4:1, 5:1})
+        res1 = res1.append(df[['uid','iid','ratings']], ignore_index=True)
+
+    res2 = pd.DataFrame([])
+    for df in pd.read_csv(path + domain1 + '_and_' + domain2 + '_ratings_2.csv', names=['uid', 'iid', 'ratings','time'], chunksize=chunksize):
+        df['ratings'] = df['ratings'].map({1: 0, 2: 0, 3: 0, 4: 1, 5: 1})
+        res2 = res2.append(df[['uid','iid','ratings']], ignore_index=True)
+
+    # Write the file
+    res1.to_csv(path + domain1 + '_and_' + domain2 + '_binary_ratings_1.csv', index=False, header=False)
+    res2.to_csv(path + domain1 + '_and_' + domain2 + '_binary_ratings_2.csv', index=False, header=False)
 
 
 
@@ -153,7 +172,11 @@ if __name__ == "__main__":
     # Stats('/media/work/Workspace/DataSets/Amazon/Raw/Ratings/')
 
     # Cross Domain Statistics
-    CrossDomainStats(spath='/media/work/Workspace/DataSets/Amazon/Raw/Ratings/',
-                     tpath='/media/work/Workspace/PhD_Projects/CDRS/Data/Amazon/Shared_UID/',
-                     domain1='Electronics', domain2='Movies_and_TV',
-                     sel='user')
+    # CrossDomainStats(spath='/media/work/Workspace/DataSets/Amazon/Raw/Ratings/',
+    #                  tpath='/media/work/Workspace/PhD_Projects/CDRS/Data/Amazon/Shared_UID/',
+    #                  domain1='Electronics', domain2='Movies_and_TV',
+                     # sel='user')
+
+    # Generate the CoNet Data
+    CoNetData(path='/media/work/Workspace/PhD_Projects/CDRS/Data/Amazon/Shared_UID/',
+              domain1='Amazon_Instant_Video',domain2='Musical_Instruments',)
