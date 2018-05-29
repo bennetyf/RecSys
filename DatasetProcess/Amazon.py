@@ -90,16 +90,16 @@ def CrossDomainStats(spath, tpath, domain1, domain2, sel, chunksize=10**6):
         # Read the user data into the memory
         res1 = pd.DataFrame([])
         for df in pd.read_csv(spath+'Stats/user_'+domain1+'.csv', names=['uid1', 'iid'], chunksize=chunksize, skiprows=[0]):
-            res1 = res1.append(df[['uid1']], ignore_index=True)
+            res1 = res1.append(df.loc[:,['uid1']], ignore_index=True)
         # res1.columns=['uid1']
         res2 = pd.DataFrame([])
         for df in pd.read_csv(spath+'Stats/user_'+domain2+'.csv', names=['uid2', 'iid'], chunksize=chunksize, skiprows=[0]):
-            res2 = res2.append(df[['uid2']], ignore_index=True)
+            res2 = res2.append(df.loc[:,['uid2']], ignore_index=True)
         # res2.columns=['uid2']
 
         # Find the shared UIDs in the two domains
         merged = res1.merge(res2,left_on='uid1',right_on='uid2',how='outer',indicator=True)
-        shared_uid = merged[merged['_merge'] == 'both'][['uid1']]
+        shared_uid = merged.loc[merged['_merge'] == 'both', ['uid1']]
         # unique_uid1 = merged[merged['_merge'] == 'left_only']['uid1'].tolist()
         # unique_uid2 = merged[merged['_merge'] == 'right_only']['uid2'].tolist()
         # print(unique_uid2)
@@ -123,11 +123,11 @@ def CrossDomainStats(spath, tpath, domain1, domain2, sel, chunksize=10**6):
         print("The number of items in {0} is: {1}".format(domain1, iid1.shape[0]))
         print("The number of items in {0} is: {1}".format(domain2, iid2.shape[0]))
 
-        shared_uid.to_csv(tpath + domain1 + '_and_' + domain2 + '_uid.csv',index=False, header=False)
-        iid1.to_csv(tpath + domain1 + '_and_' + domain2 + '_iid_1.csv',index=False, header=False)
-        iid2.to_csv(tpath + domain1 + '_and_' + domain2 + '_iid_2.csv', index=False, header=False)
-        res1.to_csv(tpath + domain1 + '_and_' + domain2 + '_ratings_1.csv', index=False, header=False)
-        res2.to_csv(tpath + domain1 + '_and_' + domain2 + '_ratings_2.csv', index=False, header=False)
+        # shared_uid.to_csv(tpath + domain1 + '_and_' + domain2 + '_uid.csv',index=False, header=False)
+        # iid1.to_csv(tpath + domain1 + '_and_' + domain2 + '_iid_1.csv',index=False, header=False)
+        # iid2.to_csv(tpath + domain1 + '_and_' + domain2 + '_iid_2.csv', index=False, header=False)
+        # res1.to_csv(tpath + domain1 + '_and_' + domain2 + '_ratings_1.csv', index=False, header=False)
+        # res2.to_csv(tpath + domain1 + '_and_' + domain2 + '_ratings_2.csv', index=False, header=False)
 
     elif sel == 'item':
         # Summarize the shared items in the two nominated domains
@@ -138,25 +138,6 @@ def CrossDomainStats(spath, tpath, domain1, domain2, sel, chunksize=10**6):
         # Summarize the part which both users and items do not overlap
 
         return 0
-
-# Generate the data for CoNet
-
-def CoNetData(path, domain1, domain2, chunksize=10**6):
-    # Read the user data into the memory
-    res1 = pd.DataFrame([])
-    for df in pd.read_csv(path + domain1 + '_and_' + domain2 + '_ratings_1.csv', names=['uid', 'iid', 'ratings','time'], chunksize=chunksize):
-        df['ratings'] = df['ratings'].map({1:0, 2:0, 3:0, 4:1, 5:1})
-        res1 = res1.append(df[['uid','iid','ratings']], ignore_index=True)
-
-    res2 = pd.DataFrame([])
-    for df in pd.read_csv(path + domain1 + '_and_' + domain2 + '_ratings_2.csv', names=['uid', 'iid', 'ratings','time'], chunksize=chunksize):
-        df['ratings'] = df['ratings'].map({1: 0, 2: 0, 3: 0, 4: 1, 5: 1})
-        res2 = res2.append(df[['uid','iid','ratings']], ignore_index=True)
-
-    # Write the file
-    res1.to_csv(path + domain1 + '_and_' + domain2 + '_binary_ratings_1.csv', index=False, header=False)
-    res2.to_csv(path + domain1 + '_and_' + domain2 + '_binary_ratings_2.csv', index=False, header=False)
-
 
 
 if __name__ == "__main__":
@@ -171,12 +152,8 @@ if __name__ == "__main__":
     # Statistics for all categories
     # Stats('/media/work/Workspace/DataSets/Amazon/Raw/Ratings/')
 
-    # Cross Domain Statistics
-    # CrossDomainStats(spath='/media/work/Workspace/DataSets/Amazon/Raw/Ratings/',
-    #                  tpath='/media/work/Workspace/PhD_Projects/CDRS/Data/Amazon/Shared_UID/',
-    #                  domain1='Electronics', domain2='Movies_and_TV',
-                     # sel='user')
-
-    # Generate the CoNet Data
-    CoNetData(path='/media/work/Workspace/PhD_Projects/CDRS/Data/Amazon/Shared_UID/',
-              domain1='Amazon_Instant_Video',domain2='Musical_Instruments',)
+    # # Cross Domain Statistics
+    CrossDomainStats(spath='/media/work/Workspace/DataSets/Amazon/Raw/Ratings/',
+                     tpath='/media/work/Workspace/PhD_Projects/CDRS/Data/Amazon/Shared_UID/',
+                     domain1='Amazon_Instant_Video', domain2='Musical_Instruments',
+                     sel='user')
