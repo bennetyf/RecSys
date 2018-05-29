@@ -5,7 +5,7 @@ import tensorflow as tf
 import numpy as np
 import argparse
 
-from Dataset import Dataset
+from CoNet.Dataset import Dataset
 # import RecUtils as util
 import RecEval as evl
 
