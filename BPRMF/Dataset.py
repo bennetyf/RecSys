@@ -35,9 +35,6 @@ class Dataset(object):
         else:
             self.train = self.load_dataset(path + 'train.csv',csv_cols)
 
-        # Load test data
-        self.test = self.load_dataset(path + 'test.csv',csv_cols)
-
         # Load the topK data
         self.test_topk = self.load_dataset(path + 'test_topk.csv', csv_cols)
 

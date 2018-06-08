@@ -10,13 +10,13 @@ def GenreSplit_ML100K():
     pre = ['iid','title','release_date','video_release_date','IMDb_URL']
     headers = pre + genrelist
 
-    movies = pd.read_csv("/media/work/Workspace/DataSets/MovieLens/ml-100k/u.item", names=headers, sep='|', engine='python')
+    movies = pd.read_csv("/media/data/Workspace/DataSets/MovieLens/ml-100k/u.item", names=headers, sep='|', engine='python')
     # Keep the genre names only
     movies = movies[['iid']+genrelist]
     # print(movies.loc[0:4,['Action','Adventure']])
 
     # Read in the user-item ratings
-    ratings = pd.read_csv("/media/work/Workspace/DataSets/MovieLens/ml-100k/u.data", names=['uid','iid','rating','time'], sep='\t', engine='python')
+    ratings = pd.read_csv("/media/data/Workspace/DataSets/MovieLens/ml-100k/u.data", names=['uid','iid','rating','time'], sep='\t', engine='python')
     # ratings = ratings[['uid','iid','rating']]
 
     # For each genre extract the relevent movie ids and then extract the relevant u-i pairs in rating matrix
@@ -40,7 +40,7 @@ def GenreSplit_ML100K():
     df.to_csv('../Data/MovieLens/ml-100k/Genres_iid.csv', index=False,header=False)
 
 def GenreSplit_ML1M():
-    movies = pd.read_csv("/media/work/Workspace/DataSets/MovieLens/ml-1m/movies.dat", names=['iid','title','genres'], sep='::',engine='python')
+    movies = pd.read_csv("/media/data/Workspace/DataSets/MovieLens/ml-1m/movies.dat", names=['iid','title','genres'], sep='::',engine='python')
     # print(movies.isnull().values.any())
 
     # Get the list of genres
@@ -52,7 +52,7 @@ def GenreSplit_ML1M():
     movies.drop('genres', inplace=True, axis=1)
 
     # Read u-i ratings
-    ratings = pd.read_csv("/media/work/Workspace/DataSets/MovieLens/ml-1m/ratings.dat", names=['uid','iid','rating','time'], sep='::',engine='python')
+    ratings = pd.read_csv("/media/data/Workspace/DataSets/MovieLens/ml-1m/ratings.dat", names=['uid','iid','rating','time'], sep='::',engine='python')
 
     # Split the u-i rating file
     df=pd.DataFrame([])
@@ -74,7 +74,7 @@ def GenreSplit_ML1M():
     # df.to_csv('../Data/MovieLens/ml-1m/Genres_iid.csv', index=False,header=False)
 
 def GenreSplit_ML10M():
-    movies = pd.read_csv("/media/work/Workspace/DataSets/MovieLens/ml-10m/movies.dat", names=['iid', 'title', 'genres'],sep='::', engine='python')
+    movies = pd.read_csv("/media/data/Workspace/DataSets/MovieLens/ml-10m/movies.dat", names=['iid', 'title', 'genres'],sep='::', engine='python')
     # print(movies.isnull().values.any())
 
     # Get the list of genres
@@ -86,7 +86,7 @@ def GenreSplit_ML10M():
     movies.drop('genres', inplace=True, axis=1)
 
     # Read u-i ratings
-    ratings = pd.read_csv("/media/work/Workspace/DataSets/MovieLens/ml-10m/ratings.dat",
+    ratings = pd.read_csv("/media/data/Workspace/DataSets/MovieLens/ml-10m/ratings.dat",
                           names=['uid', 'iid', 'rating', 'time'], sep='::', engine='python')
 
     # Split the u-i rating file
@@ -109,7 +109,7 @@ def GenreSplit_ML10M():
     df.to_csv('../Data/MovieLens/ml-10m/Genres_iid.csv', index=False,header=False)
 
 def GenreSplit_ML20M():
-    movies = pd.read_csv("/media/work/Workspace/DataSets/MovieLens/ml-20m/movies.csv", names=['iid', 'title', 'genres'],sep=',', skiprows=1, engine='python')
+    movies = pd.read_csv("/media/data/Workspace/DataSets/MovieLens/ml-20m/movies.csv", names=['iid', 'title', 'genres'],sep=',', skiprows=1, engine='python')
 
     # Get the list of genres
     genrelist = pd.DataFrame(movies.genres.str.split('|').tolist()).stack().unique()
@@ -126,7 +126,7 @@ def GenreSplit_ML20M():
         genre = genrelist[i]
         tmp = movies.loc[movies[genre]]
         res = pd.DataFrame([])
-        for ratings in pd.read_csv("/media/work/Workspace/DataSets/MovieLens/ml-20m/ratings.csv",
+        for ratings in pd.read_csv("/media/data/Workspace/DataSets/MovieLens/ml-20m/ratings.csv",
                           names=['uid', 'iid', 'rating', 'time'], sep=',', engine='python', chunksize=chunksize):
             res = res.append(ratings.loc[ratings['iid'].isin(tmp['iid'].tolist())])
         res.to_csv('../Data/MovieLens/ml-20m/' + genre + '.csv', index=False, header=False)

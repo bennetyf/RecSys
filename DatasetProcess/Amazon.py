@@ -142,18 +142,18 @@ def CrossDomainStats(spath, tpath, domain1, domain2, sel, chunksize=10**6):
 
 if __name__ == "__main__":
     # Change to CSV
-    # Raw2CSV('/media/work/Workspace/DataSets/Amazon/Raw/Category/reviews_Amazon_Instant_Video.json.gz',
-    #         '/media/work/Workspace/DataSets/Amazon/Raw/Ratings/Category/Amazon_Instant_Video.csv')
+    # Raw2CSV('/media/data/Workspace/DataSets/Amazon/Raw/Category/reviews_Amazon_Instant_Video.json.gz',
+    #         '/media/data/Workspace/DataSets/Amazon/Raw/Ratings/Category/Amazon_Instant_Video.csv')
 
     # Testing
-    # df = getSlicedDF('/media/work/Workspace/DataSets/Amazon/Complete/reviews_Musical_Instruments.json.gz',chunksize=10**5)
+    # df = getSlicedDF('/media/data/Workspace/DataSets/Amazon/Complete/reviews_Musical_Instruments.json.gz',chunksize=10**5)
     # print(df.loc[:,:])
 
     # Statistics for all categories
-    # Stats('/media/work/Workspace/DataSets/Amazon/Raw/Ratings/')
+    # Stats('/media/data/Workspace/DataSets/Amazon/Raw/Ratings/')
 
     # # Cross Domain Statistics
-    CrossDomainStats(spath='/media/work/Workspace/DataSets/Amazon/Raw/Ratings/',
-                     tpath='/media/work/Workspace/PhD_Projects/CDRS/Data/Amazon/Shared_UID/',
+    CrossDomainStats(spath='/media/data/Workspace/DataSets/Amazon/Raw/Ratings/',
+                     tpath='/media/data/Workspace/PhD_Projects/CDRS/Data/Amazon/Shared_UID/',
                      domain1='Amazon_Instant_Video', domain2='Musical_Instruments',
                      sel='user')

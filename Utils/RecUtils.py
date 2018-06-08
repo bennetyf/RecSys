@@ -58,7 +58,7 @@ def deleteFiles(filelist):
 
 ########################################### Basic Data Operations ######################################################
 # Load data as a pandas dataframe
-def loadData(datafile, names = ['uid','iid','ratings'], chunksize=10**8):
+def loadData(datafile, names = ['uid','iid','ratings'], opt='all'):
     '''
     This function loads data as a pandas dataframe.
     If succeeded, return true, else return false for only loading a chunk of the data
@@ -66,13 +66,16 @@ def loadData(datafile, names = ['uid','iid','ratings'], chunksize=10**8):
     # Check whether the file exists
     assert os.path.exists(datafile)
 
-    # If the datafile size is larger than 1GB
-    if fileSize(datafile) > 1024:
-        print("The file size is larger than 1GB, loading a chunk of it.")
-        return pd.read_csv(datafile, header=None, names=names, engine='python', chunksize=chunksize), False
+    if opt == 'safe':
+        # If the datafile size is larger than 1GB
+        if fileSize(datafile) > 1024:
+            print("The file size is larger than 1GB, loading a chunk of it.")
+            return pd.read_csv(datafile, header=None, names=names, engine='python', iterator=True)
+        else:
+            # Read all the CSV file
+            return pd.read_csv(datafile, header=None, names=names, engine='python')
     else:
-        # Read all the CSV file
-        return pd.read_csv(datafile, header=None, names=names, engine='python'), True
+        return pd.read_csv(datafile, header=None, names=names, engine='python')
 
 # Convert the a list data into sparse matrix
 def arr2Mat(data, matrix_type = 'dok'):
@@ -133,7 +136,7 @@ def id2Num(data):
     return data
 
 # Filter out those users or items whose number of ratings are below a specific threshold
-def uiFilter(data, opt = None, threshold = 0):
+def uiFilter(data, opt = None, threshold = 0, n_user = 0, n_item = 0):
     if opt == 'user':
         # Filter the ratings data by the number of ratings in each user
         # (make sure there is no cold-start problem when training)
@@ -161,6 +164,33 @@ def uiFilter(data, opt = None, threshold = 0):
         data = data.reset_index(drop=True)
 
         # Change the code into numbers
+        return data
+
+    elif opt == 'random':
+        # Randomly pick out a portion of the data from the ui-matrix
+        # total_user, total_item = data.max(axis=0)[[_UID,_IID]] + 1
+        if n_user > 0 : # randomly pick out the given number of users
+            # Group by user ids
+            n_ratings_per_user = data.groupby([_UID])[[_IID]].count()
+            n_ratings_per_user.columns = ['number_of_ratings']
+            # Sample on the grouped dataframe
+            u_sa = n_ratings_per_user.sample(n=n_user, axis=0)
+            # Use the index to filter out the desired data
+            data.index = data[_UID]
+            data = data.loc[list(u_sa.index.values)]
+            data = data.reset_index(drop=True)
+
+        if n_item > 0: # randomly pick out the given number of items
+            # Group by item ids
+            n_ratings_per_item = data.groupby([_IID])[[_UID]].count()
+            n_ratings_per_item.columns = ['number_of_ratings']
+            # Sample on the grouped dataframe
+            i_sa = n_ratings_per_item.sample(n=n_item, axis=0)
+            # Use the index to filter out the desired data
+            data.index = data[_IID]
+            data = data.loc[list(i_sa.index.values)]
+            data = data.reset_index(drop=True)
+
         return data
     else:
         return data
@@ -197,7 +227,7 @@ def dataSplit(data, opt=None, train_ratio=None, seed=None):
         return [],[]
 
 # Negative sampling that generates a list of data containing the mixture of positive and negative samples
-def negSample(source, target, num_neg = 0, maxlines = 10**7, neg_val = 0, method = 'direct', mod='train',
+def negSample(source, target, num_neg = 0, neg_val = 0, maxlines = 10**7, method = 'direct', mod='train',
               store = False, store_path = None, fname = None):
     '''
     :param source:  The whole dataset(U-I matrix) in the dataframe format
@@ -272,6 +302,10 @@ def negSample(source, target, num_neg = 0, maxlines = 10**7, neg_val = 0, method
                     loop += 1
                     print("[RecUtils.negSample]: Storing File : {0}".format(file_name))
 
+            # Save some memory
+            iid_list, item_neg = pd.DataFrame([]), pd.DataFrame([])
+            gc.collect()
+
         print("[RecUtils.negSample]: Using Method {0}. Leaving the Main Sampling Loop.".format(method))
 
         # The Last Piece of Data
@@ -285,7 +319,7 @@ def negSample(source, target, num_neg = 0, maxlines = 10**7, neg_val = 0, method
             print("[RecUtils.negSample]: Using Method {0}. Merging Files.".format(method))
             mergeFiles(store_path + fname, file_names)
             deleteFiles(file_names)
-
+            print("[RecUtils.negSample]: Using Method {0}. Files Merged.".format(method))
             # Return something after processing
             return res
 
@@ -317,7 +351,8 @@ def negSample(source, target, num_neg = 0, maxlines = 10**7, neg_val = 0, method
         print("[RecUtils.negSample]: Using Method {0}. Entering the Main Sampling Loop.".format(method))
         res, file_names, i, loop = pd.DataFrame([]), [], 0, 0
         for (uid, iid) in spmat.keys():
-            res = res.append(target.loc[[i],:], ignore_index=True)
+            if mode == 1: # For generating the training dataset
+                res = res.append(target.loc[[i],:], ignore_index=True)
             for j in range(num_neg): # Generate num_neg of negative samples
                 # Randomly choose an item number (This can work because the U-I matrix is sparse)
                 trial = np.random.randint(num_item)
@@ -326,7 +361,10 @@ def negSample(source, target, num_neg = 0, maxlines = 10**7, neg_val = 0, method
                     trial = np.random.randint(num_item)
                 # Append the dataframe
                 res = res.append(pd.DataFrame([[uid, trial, neg_val]],columns=[_UID,_IID,_RATE]), ignore_index=True)
+            if mode == 2: # For generating the topk testing dataset
+                res = res.append(target.loc[[i], :], ignore_index=True)
             i += 1
+
 
             if flag:
                 # The following is for generation of very large datasets
@@ -353,6 +391,7 @@ def negSample(source, target, num_neg = 0, maxlines = 10**7, neg_val = 0, method
             print("[RecUtils.negSample]: Using Method {0}. Merging Files.".format(method))
             mergeFiles(store_path + fname, file_names)
             deleteFiles(file_names)
+            print("[RecUtils.negSample]: Using Method {0}. Files Merged.".format(method))
             return res
 
         else: # Small data
@@ -365,25 +404,43 @@ def negSample(source, target, num_neg = 0, maxlines = 10**7, neg_val = 0, method
 
 # This function is for filtering the data by shared users (also returns
 def filterBySharedUsers(data1, data2):
-
     # Find the shared UIDs
     merged = data1.merge(data2, left_on=_UID, right_on=_UID, how='outer', indicator=True)
     shared_uid = merged.loc[merged['_merge'] == 'both', [_UID]]
-    shared_uid = shared_uid.drop_duplicates([_UID], keep='last')
-    shared_uid = shared_uid.reset_index(drop=True)
 
     # Extract the ratings of the shared UIDs in the two domains
-    res1 = data1.loc[data1[_UID].isin(shared_uid[_UID].tolist())].sort_values(by=[_UID])
-    res2 = data2.loc[data2[_UID].isin(shared_uid[_UID].tolist())].sort_values(by=[_UID])
+    res1 = data1.loc[data1[_UID].isin(shared_uid[_UID].tolist()),:].sort_values(by=[_UID])
+    res2 = data2.loc[data2[_UID].isin(shared_uid[_UID].tolist()),:].sort_values(by=[_UID])
+
+    shared_uid = shared_uid.drop_duplicates([_UID], keep='last')
+    shared_uid = shared_uid.reset_index(drop=True)
 
     return res1, res2, shared_uid
 
 # This function is used to get the number of users and items in the U-I matrix
 def getUINum(filepath):
     assert os.path.exists(filepath)
-    df, sig = loadData(filepath,names=[_UID,_IID,_RATE])
-    # Make sure all the data is loaded into memory
-    assert sig == True
+    df = loadData(filepath,names=[_UID,_IID,_RATE],opt='all')
     # Get the max values in each column
-    return df.max(axis=0)[['uid', 'iid']] + 1
+    n_user = df[_UID].unique().shape[0]
+    n_item = df[_IID].unique().shape[0]
+    n_ratings = df.shape[0]
+    return n_user, n_item, n_ratings
 
+def upSampling(data1, data2):
+    n_ratings1 = data1.shape[0]
+    n_ratings2 = data2.shape[0]
+    if n_ratings1 == n_ratings2:
+        pass
+    elif n_ratings1 < n_ratings2:
+        idx = np.random.randint(n_ratings1, size=n_ratings2 - n_ratings1).tolist()
+        data1 = data1.append(data1.loc[idx, :], ignore_index=True)
+    else:
+        idx = np.random.randint(n_ratings2, size=n_ratings1 - n_ratings2).tolist()
+        data2 = data2.append(data2.loc[idx, :], ignore_index=True)
+    return data1, data2
+
+# Drop out all the negative ratings
+def zeroPruning(data, column=_RATE):
+    data = data[data[column] != 0]
+    return data.reset_index(drop=True)

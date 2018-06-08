@@ -1,15 +1,17 @@
 import sys,os
 sys.path.append(os.path.abspath(os.path.dirname(__file__) + '/../..'))
 # os.environ['TF_CPP_MIN_LOG_LEVEL']='2'
-os.environ["CUDA_VISIBLE_DEVICES"]="2"
+os.environ["CUDA_VISIBLE_DEVICES"]="0"
 
 import tensorflow as tf
 import numpy as np
 import argparse
-import time
 
 import Utils.RecEval as evl
 import Utils.MatUtils as mtl
+import Utils.DfUtils as dfl
+
+import time
 ############################################### The CoNet Model ########################################################
 
 # Define the class for CoNet
@@ -30,41 +32,43 @@ class CoNetRec(object):
         self.skip_step = T
         self.verbose = verbose
 
-    def prepare_data(self, original_matrix1, train_matrix1, test_matrix1,
-                           original_matrix2, train_matrix2, test_matrix2,):
+    def prepare_data(self, original_df1, train_df1, test_df1, test_dict1,
+                     original_df2, train_df2, test_df2, test_dict2):
 
         # Meta Info
-        self.num_user1, self.num_item1 = train_matrix1.shape
-        self.num_user2, self.num_item2 = train_matrix2.shape
+        self.num_user1, self.num_item1 = train_df1['uid'].unique().shape[0],train_df1['iid'].unique().shape[0]
+        self.num_user2, self.num_item2 = train_df2['uid'].unique().shape[0],train_df2['iid'].unique().shape[0]
 
-        self.neg_dict1,self.test_dict1 = mtl.get_negative_for_u(original_matrix1,test_matrix1,num_neg=self.num_ranking_list-1)
-        self.neg_dict2,self.test_dict2 = mtl.get_negative_for_u(original_matrix2,test_matrix2,num_neg=self.num_ranking_list-1)
+        # Upsampling
+        train1, train2 = dfl.data_upsample(train_df1, train_df2)
 
-        self.train_uid1, self.train_iid1, self.train_labels1 = mtl.matrix_to_list(train_matrix1)
-        self.train_uid2, self.train_iid2, self.train_labels2 = mtl.matrix_to_list(train_matrix2)
+        self.ui_dict1 = dfl.get_user_item_dict(original_df1)
+        self.ui_dict2 = dfl.get_user_item_dict(original_df2)
 
-        # Extend the shorter training data
+        # Negative Sampling if Required
+        if self.num_neg > 0:
+            print("Enter NegSa")
+            start_time = time.time()
+            train1 = dfl.negative_sample_df(original_df1, self.ui_dict1, train1, test_df1, num_neg=1, neg_val=0, opt='train')
+            train2 = dfl.negative_sample_df(original_df2, self.ui_dict2, train2, test_df2, num_neg=1, neg_val=0, opt='train')
+            print("Leaving NegSa")
+            print("Negative Sampling Time: {0}".format(time.time()-start_time))
+
+        self.train_uid1, self.train_iid1, self.train_labels1 = dfl.df_to_list(train1)
+        self.train_uid2, self.train_iid2, self.train_labels2 = dfl.df_to_list(train2)
+
         length1, length2 = len(self.train_labels1), len(self.train_labels2)
         self.num_training = max(length1, length2)
         self.num_batch = int(self.num_training / self.batch_size)
 
-        if length1 < length2:
-            self.train_iid1, self.train_iid1, self.train_labels1 =\
-                mtl.data_upsample_list(self.train_iid1, self.train_iid1, self.train_labels1,num_ext=length2-length1)
-        if length2 > length1:
-            self.train_iid2, self.train_iid2, self.train_labels2 = \
-                mtl.data_upsample_list(self.train_iid2, self.train_iid2, self.train_labels2, num_ext=length1-length2)
-
-        # Negative Sampling on Lists
-        print("Enter NegSa")
-        start_time = time.time()
-        self.train_uid1, self.train_iid1, self.train_labels1 \
-            = mtl.negative_sample_list(self.neg_dict1, self.train_uid1, self.train_iid1, self.train_labels1,num_neg=self.num_neg,neg_val=0)
-
-        self.train_uid2, self.train_iid2, self.train_labels2 \
-            = mtl.negative_sample_list(self.neg_dict2, self.train_uid2, self.train_iid2, self.train_labels2, num_neg=self.num_neg, neg_val=0)
-        print("Leaving NegSa")
-        print("Negative Sampling Time: {0}".format(time.time() - start_time))
+        # Generating the testing dictionary
+        if self.num_ranking_list > 1:
+            self.test_dict1 = \
+                dfl.negative_sample_df(original_df1, self.ui_dict1, train1, test_df1, num_neg=self.num_ranking_list-1, opt='test')
+            self.test_dict2 = \
+                dfl.negative_sample_df(original_df2, self.ui_dict2, train2, test_df2, num_neg=self.num_ranking_list-1, opt='test')
+        else:
+            self.test_dict1, self.test_dict2 = test_dict1, test_dict2
         print("Data Preparation Completed.")
 
     def model(self, num_factors = 16):
@@ -107,8 +111,8 @@ class CoNetRec(object):
             # mlp_vector2 = tf.layers.dense(mlp_vector2_tmp, units=64, activation=tf.nn.relu)
             # mlp_vector1 = tf.layers.dropout(mlp_vector1, rate=0.5)
             # mlp_vector2 = tf.layers.dropout(mlp_vector2, rate=0.5)
-
-            # Cross Stitching
+            #
+            # # Cross Stitching
             # W11 = tf.get_variable('W11', shape=[64,64], initializer=tf.random_normal_initializer(0.0,0.01))
             # W12 = tf.get_variable('W12', shape=[64,64], initializer=tf.random_normal_initializer(0.0,0.01))
             # H1 = tf.get_variable('H1', shape=[64,64], initializer=tf.random_normal_initializer(0.0,0.01))
@@ -136,9 +140,9 @@ class CoNetRec(object):
             mlp_vector1 = tf.layers.dropout(mlp_vector1, rate=0.5)
             mlp_vector2 = tf.layers.dropout(mlp_vector2, rate=0.5)
 
-            W31 = tf.get_variable('W31', shape=[16,8], initializer=tf.random_uniform_initializer(-1,1))
-            W32 = tf.get_variable('W32', shape=[16,8], initializer=tf.random_uniform_initializer(-1,1))
-            H3 = tf.get_variable('H3', shape=[16,8], initializer=tf.random_uniform_initializer(-1,1))
+            W31 = tf.get_variable('W31', shape=[16,16], initializer=tf.random_uniform_initializer(-1,1))
+            W32 = tf.get_variable('W32', shape=[16,16], initializer=tf.random_uniform_initializer(-1,1))
+            H3 = tf.get_variable('H3', shape=[16,16], initializer=tf.random_uniform_initializer(-1,1))
 
             mlp_vector1_tmp = tf.nn.relu(tf.matmul(mlp_vector1,W31) + tf.matmul(mlp_vector2,H3))
             mlp_vector2_tmp = tf.nn.relu(tf.matmul(mlp_vector2,W32) + tf.matmul(mlp_vector1,H3))
@@ -321,6 +325,10 @@ class CoNetRec(object):
 ######################################## Parse Arguments ###############################################################
 def parseArgs():
     parser = argparse.ArgumentParser(description="CoNet for Cross Domain Recommendation")
+    # parser.add_argument('--path1', nargs='?', default='Data/domain1/', type=str,
+    #                     help='Input data path for domain1.')
+    # parser.add_argument('--path2', nargs='?', default='Data/domain2/', type=str,
+    #                     help='Input data path for domain2.')
     parser.add_argument('--epochs', type=int, default=100,
                         help='Number of epochs.')
     parser.add_argument('--batch_size', type=int, default=128,
@@ -329,9 +337,9 @@ def parseArgs():
                         help='Embedding size.')
     parser.add_argument('--ebregs', nargs='?', default='[0.001,0.001,0.001]', type=str,
                         help="Regularization constants for user and item embeddings.")
-    parser.add_argument('--num_neg', type=int, default=8,
+    parser.add_argument('--num_neg', type=int, default=1,
                         help='Number of negative instances to pair with a positive instance.')
-    parser.add_argument('--alpha', type=int, default=0.7,
+    parser.add_argument('--alpha', type=int, default=0.6,
                         help='The loss split ration between the two domains.')
     parser.add_argument('--lr', type=float, default=0.001,
                         help='Learning rate.')
@@ -346,15 +354,14 @@ if __name__ == "__main__":
     args = parseArgs()
     num_epochs, batch_size, regs, num_neg, alpha, lr, ndcgk, num_factors = \
         args.epochs, args.batch_size, args.ebregs,args.num_neg,args.alpha,args.lr,args.ndcgk, args.nfactors
+
     regs = list(np.float32(eval(regs)))
 
-    original_matrix1, train_matrix1, test_matrix1, num_users1, num_items1\
-        = mtl.load_as_matrix(datafile='Data/books_small/original.csv')
-    print(train_matrix1.nnz, train_matrix1.nnz/(num_users1*num_items1))
+    original_df1, train_df1, test_df1, test_dict1, num_users1, num_items1\
+        = dfl.load_as_df(datafile='Data/books_small/original.csv')
 
-    original_matrix2, train_matrix2, test_matrix2, num_users2, num_items2\
-        = mtl.load_as_matrix(datafile='Data/elec_small/original.csv')
-    print(train_matrix2.nnz, train_matrix2.nnz/(num_users2*num_items2))
+    original_df2, train_df2, test_df2, test_dict2, num_users2, num_items2 \
+        = dfl.load_as_df(datafile='Data/elec_small/original.csv')
 
     gpu_options = tf.GPUOptions(allow_growth=True)
     with tf.Session(config=tf.ConfigProto(allow_soft_placement=True,
@@ -368,10 +375,10 @@ if __name__ == "__main__":
                          alpha=alpha,epochs=num_epochs,batch_size=batch_size,
                          T=10**3, verbose=True)
 
-        conet.prepare_data(original_matrix1=original_matrix1,train_matrix1=train_matrix1,
-                           test_matrix1=test_matrix1,
-                           original_matrix2=original_matrix2,train_matrix2=train_matrix2,
-                           test_matrix2=test_matrix2)
+        conet.prepare_data(original_df1=original_df1,train_df1=train_df1,
+                           test_df1=test_df1,test_dict1=test_dict1,
+                           original_df2=original_df2,train_df2=train_df2,
+                           test_df2=test_df2,test_dict2=test_dict2)
         # print(len(conet.test_dict1[0]),conet.test_dict1[0])
 
         conet.build(num_factors)
