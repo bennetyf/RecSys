@@ -121,19 +121,19 @@ def mat2Bin(data, threshold=0):
 # Convert the non-numerical UIDs and IIDs to numbers
 def id2Num(data):
     # Covert user ids into numbers
-    uids = pd.DataFrame(list(data.groupby([_UID]).groups.keys()), columns=[_UID])
+    uids = pd.DataFrame(list(data.groupby([_UID]).groups.keys()), columns=[_UID]).sort_values(by=[_UID])
     uids = uids.reset_index().set_index([_UID]).to_dict()
     # Generate a mapping dictionary from index to column values
     uids = uids['index']
     data.loc[:,_UID] = data.loc[:,_UID].map(uids)
 
     # Covert item ids into numbers
-    iids = pd.DataFrame(list(data.groupby([_IID]).groups.keys()), columns=[_IID])
+    iids = pd.DataFrame(list(data.groupby([_IID]).groups.keys()), columns=[_IID]).sort_values(by=[_IID])
     iids = iids.reset_index().set_index([_IID]).to_dict()
     # Generate a mapping dictionary from index to column values
     iids = iids['index']
     data.loc[:,_IID] = data.loc[:,_IID].map(iids)
-    return data
+    return data.sort_values(by=[_UID])
 
 # Filter out those users or items whose number of ratings are below a specific threshold
 def uiFilter(data, opt = None, threshold = 0, n_user = 0, n_item = 0):
@@ -407,13 +407,12 @@ def filterBySharedUsers(data1, data2):
     # Find the shared UIDs
     merged = data1.merge(data2, left_on=_UID, right_on=_UID, how='outer', indicator=True)
     shared_uid = merged.loc[merged['_merge'] == 'both', [_UID]]
+    shared_uid = shared_uid.drop_duplicates([_UID], keep='last')
+    shared_uid = shared_uid.reset_index(drop=True)
 
     # Extract the ratings of the shared UIDs in the two domains
     res1 = data1.loc[data1[_UID].isin(shared_uid[_UID].tolist()),:].sort_values(by=[_UID])
     res2 = data2.loc[data2[_UID].isin(shared_uid[_UID].tolist()),:].sort_values(by=[_UID])
-
-    shared_uid = shared_uid.drop_duplicates([_UID], keep='last')
-    shared_uid = shared_uid.reset_index(drop=True)
 
     return res1, res2, shared_uid
 

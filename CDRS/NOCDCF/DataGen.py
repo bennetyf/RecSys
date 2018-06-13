@@ -1,5 +1,5 @@
 '''
-This program is used to preprocess the data for CoNet
+This program is used to preprocess the data for NOCDCF
 '''
 import os
 import sys
@@ -16,8 +16,8 @@ def mphelper(args):
 def CoNetDataPro(spath, flag, topk, negsa, domain1 = 'Amazon_Instant_Video', domain2 = 'Musical_Instruments'):
     # domainp1 = '/media/work/Workspace/PhD_Projects/RecSys/CDRS/CoNet/Data/domain3/'
     # domainp2 = '/media/work/Workspace/PhD_Projects/RecSys/CDRS/CoNet/Data/domain4/'
-    domainp1 = '/share/scratch/fengyuan/Projects/RecSys/CDRS/CoNet/Data/books_small/'
-    domainp2 = '/share/scratch/fengyuan/Projects/RecSys/CDRS/CoNet/Data/elec_small/'
+    domainp1 = '/share/scratch/fengyuan/Projects/RecSys/CDRS/NOCDCF/Data/InstantVideo/'
+    domainp2 = '/share/scratch/fengyuan/Projects/RecSys/CDRS/NOCDCF/Data/MusicalInstrument/'
 
     if flag == True: # Recalculating from the original data
     ################ Load the original data, filter and splitting #####################
@@ -30,8 +30,8 @@ def CoNetDataPro(spath, flag, topk, negsa, domain1 = 'Amazon_Instant_Video', dom
         data1 = ul.zeroPruning(data1)
         # data1 = ul.uiFilter(data1, opt='user', threshold=5)
         # data1 = ul.uiFilter(data1,opt='random', n_user=10**5, n_item=10**4)
-        data1 = ul.uiFilter(data1,opt='item',threshold=30)
-        data1 = ul.uiFilter(data1,opt='user',threshold=9)
+        data1 = ul.uiFilter(data1,opt='item',threshold=5)
+        data1 = ul.uiFilter(data1,opt='user',threshold=5)
 
         print("Loading Data for Domain {0}".format(domain2))
         data2 = ul.loadData(spath + domain1 + '_and_' + domain2 + '_ratings_2.csv',
@@ -41,8 +41,8 @@ def CoNetDataPro(spath, flag, topk, negsa, domain1 = 'Amazon_Instant_Video', dom
         data2 = ul.zeroPruning(data2)
         # data2 = ul.uiFilter(data2, opt='user', threshold=5)
         # data2 = ul.uiFilter(data2, opt='random', n_user=2*10**5, n_item=10**4)
-        data2 = ul.uiFilter(data2, opt='item', threshold=20)
-        data2 = ul.uiFilter(data2, opt='user', threshold=9)
+        data2 = ul.uiFilter(data2, opt='item', threshold=5)
+        data2 = ul.uiFilter(data2, opt='user', threshold=5)
         print("Data Loaded")
 
         tmp = data1.groupby(['uid'])[['iid']].count()
@@ -52,40 +52,54 @@ def CoNetDataPro(spath, flag, topk, negsa, domain1 = 'Amazon_Instant_Video', dom
         print(tmp.min(axis=0))
 
         # Generating the Shared Users
-        data1, data2, user_list = ul.filterBySharedUsers(data1, data2)
+        # data1, data2, user_list = ul.filterBySharedUsers(data1, data2)
 
         # Turn into Number Coding
         data1, data2 = ul.id2Num(data1), ul.id2Num(data2)
 
-        data1.to_csv(domainp1 + 'original2.csv', index=False, header=False)
-        data2.to_csv(domainp2 + 'original2.csv', index=False, header=False)
+        print("Unique Users in domain {0} is {1}".format(domain1, data1['uid'].unique().shape[0]))
+        print("Unique Items in domain {0} is {1}".format(domain1, data1['iid'].unique().shape[0]))
+        print("Unique Ratings in domain {0} is {1}".format(domain1, data1['ratings'].shape[0]))
+        print("Density in domain {0} is {1}".format(domain1,
+                                                    100*data1['ratings'].shape[0]/(
+                                                            data1['uid'].unique().shape[0] * data1['iid'].unique().shape[0])))
+
+        print("Unique Users in domain {0} is {1}".format(domain2, data2['uid'].unique().shape[0]))
+        print("Unique Items in domain {0} is {1}".format(domain2, data2['iid'].unique().shape[0]))
+        print("Unique Ratings in domain {0} is {1}".format(domain2, data2['ratings'].shape[0]))
+        print("Density in domain {0} is {1}".format(domain2,
+                                                    100*data2['ratings'].shape[0] / (
+                                                        data2['uid'].unique().shape[0] * data2['iid'].unique().shape[0])))
+
+        data1.to_csv(domainp1 + 'original.csv', index=False, header=False)
+        data2.to_csv(domainp2 + 'original.csv', index=False, header=False)
 
         # Splitting Training and Testing Data
         train1, test1 = ul.dataSplit(data1, opt='leave-one-out')
         train2, test2 = ul.dataSplit(data2, opt='leave-one-out')
-        print(train1.max())
-        print(train2.max())
+        # print(train1['uid'].unique().shape[0])
+        # print(train2['uid'].unique().shape[0])
 
         # Make the training data of the same length in the two domains
-        n_ratings1 = train1.shape[0]
-        n_ratings2 = train2.shape[0]
-        if n_ratings1 == n_ratings2:
-            pass
-        elif n_ratings1 < n_ratings2:
-            idx = np.random.randint(n_ratings1,size=n_ratings2-n_ratings1).tolist()
-            train1 = train1.append(train1.loc[idx,:],ignore_index=True)
-        else:
-            idx = np.random.randint(n_ratings2, size=n_ratings1 - n_ratings2).tolist()
-            train2 = train2.append(train2.loc[idx, :], ignore_index=True)
-        print(train1.shape,train2.shape)
-        print(train1.max(axis=0))
-        print(train2.max(axis=0))
-        print(train2)
+        # n_ratings1 = train1.shape[0]
+        # n_ratings2 = train2.shape[0]
+        # if n_ratings1 == n_ratings2:
+        #     pass
+        # elif n_ratings1 < n_ratings2:
+        #     idx = np.random.randint(n_ratings1,size=n_ratings2-n_ratings1).tolist()
+        #     train1 = train1.append(train1.loc[idx,:],ignore_index=True)
+        # else:
+        #     idx = np.random.randint(n_ratings2, size=n_ratings1 - n_ratings2).tolist()
+        #     train2 = train2.append(train2.loc[idx, :], ignore_index=True)
+        # print(train1.shape,train2.shape)
+        # print(train1.max(axis=0))
+        # print(train2.max(axis=0))
+        # print(train2)
 
-        # train1.to_csv(domainp1 + 'train.csv', index=False, header=False)
-        # test1.to_csv(domainp1 + 'test.csv', index=False, header=False)
-        # train2.to_csv(domainp2 + 'train.csv', index=False, header=False)
-        # test2.to_csv(domainp2 + 'test.csv', index=False, header=False)
+        train1.to_csv(domainp1 + 'train.csv', index=False, header=False)
+        test1.to_csv(domainp1 + 'test.csv', index=False, header=False)
+        train2.to_csv(domainp2 + 'train.csv', index=False, header=False)
+        test2.to_csv(domainp2 + 'test.csv', index=False, header=False)
     else:
         # Load the data from the disk
         print("Loading Data for Domain {0}".format(domain1))
@@ -148,10 +162,10 @@ def Merge_Domains(data1, data2):
 if __name__ == "__main__":
     # Generate the CoNet Data
     # CoNetDataPro('/media/work/Workspace/PhD_Projects/RecSys/CDRS/Data/Amazon/Shared_UID/',
-    # CoNetDataPro('/share/scratch/fengyuan/Projects/RecSys/CDRS/Data/Amazon/Shared_UID/',
+    # CoNetDataPro('/share/scratch/fengyuan/Projects/RecSys/CDRS/Data/Amazon/Unique_UI/',
     #              flag=True,topk=False,negsa=False,
-    #              domain1='Books', domain2='Electronics')
-                 # domain1='Amazon_Instant_Video', domain2='Musical_Instruments')
+    #              # domain1='Books', domain2='Electronics')
+    #              domain1='Amazon_Instant_Video', domain2='Musical_Instruments')
 
     domainp1 = '/share/scratch/fengyuan/Projects/RecSys/CDRS/CoNet/Data/books_small/'
     domainp2 = '/share/scratch/fengyuan/Projects/RecSys/CDRS/CoNet/Data/elec_small/'
