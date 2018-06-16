@@ -16,7 +16,7 @@ import Utils.GenUtils as gtl
 ############################################### The MLP Model ##########################################################
 # Define the class for MLP
 class MLP(object):
-    def __init__(self, sess, num_neg, top_K = 10, num_ranking_list = 100,
+    def __init__(self, sess, num_neg, top_K = 10, num_ranking_neg = 0,
                  num_factors=16, layers=[20,10], regs_emb=[0,0], regs_layer=[0,0],
                  lr=0.001,
                  epochs=100, batch_size=128, T=10**3, verbose=False):
@@ -25,7 +25,7 @@ class MLP(object):
         self.session = sess
         self.num_neg = num_neg
         self.topk = top_K
-        self.num_ranking_list = num_ranking_list
+        self.num_ranking_neg = num_ranking_neg
 
         self.num_factors = num_factors
         self.layers = layers
@@ -41,15 +41,15 @@ class MLP(object):
 
     def prepare_data(self, original_matrix, train_matrix, test_matrix):
         self.num_user,self.num_item = original_matrix.shape
+        self.neg_dict, self.ranking_dict, self.test_dict = mtl.negdict_mat(original_matrix, test_matrix, num_neg=self.num_ranking_neg)
         self.train_uid, self.train_iid, self.train_labels = mtl.matrix_to_list(train_matrix)
-        self.test_uid, self.test_iid, self.test_labels = mtl.matrix_to_list(test_matrix)
-        self.neg_dict, self.test_dict = mtl.negdict_mat(original_matrix, test_matrix,
-                                                          num_neg=self.num_ranking_list - 1)
+
         # Negative Sampling on Lists
         print("Enter NegSa")
         start_time = time.time()
-        mtl.negative_sample_list(user_list=self.train_uid,item_list=self.train_iid,rating_list=self.train_labels,
-                                 num_neg=self.num_neg,neg_val=0,neg_dict=self.neg_dict)
+        self.train_uid, self.train_iid, self.train_labels =\
+            mtl.negative_sample_list(user_list=self.train_uid,item_list=self.train_iid,rating_list=self.train_labels,
+                                     num_neg=self.num_neg,neg_val=0,neg_dict=self.neg_dict)
         print("Leaving NegSa")
         print("Negative Sampling Time: {0}".format(time.time() - start_time))
 
@@ -58,7 +58,7 @@ class MLP(object):
 
         print("Data Preparation Completed.")
 
-    def model(self):
+    def build_model(self):
         with tf.variable_scope('Model'):
             self.uid = tf.placeholder(dtype=tf.int32, shape=[None], name='user_id')
             self.iid = tf.placeholder(dtype=tf.int32, shape=[None], name='item_id')
@@ -67,11 +67,11 @@ class MLP(object):
             # One-hot input
             embeddings_user = tf.get_variable(name='user_embed',
                                               shape=[self.num_user, self.num_factors],
-                                              initializer=tf.random_uniform_initializer(-1, 1))
+                                              initializer=tf.truncated_normal_initializer(mean=0.0, stddev=0.01))
 
             embeddings_item = tf.get_variable(name='item_embed',
                                                shape=[self.num_item, self.num_factors],
-                                               initializer=tf.random_uniform_initializer(-1, 1))
+                                               initializer=tf.truncated_normal_initializer(mean=0.0, stddev=0.01))
 
             embed_layer_user = tf.nn.embedding_lookup(embeddings_user, self.uid)
             embed_layer_item = tf.nn.embedding_lookup(embeddings_item, self.iid)
@@ -81,118 +81,98 @@ class MLP(object):
             assert len(self.layers) == len(self.regs_layer)
             for i in range(len(self.layers)):
                 mlp_vector = tf.layers.dense(mlp_vector, units=self.layers[i], activation=tf.nn.relu,
-                                             kernel_regularizer=tf.contrib.layers.l2_regularizer(scale=self.regs_layer[i]))
+                                             kernel_initializer=tf.truncated_normal_initializer(mean=0.0, stddev=0.01),
+                                             kernel_regularizer=tf.contrib.layers.l2_regularizer(scale=self.regs_layer[i]),
+                                             name='layer{0}'.format(i))
 
             # Output
             mlp_vector_out = tf.layers.dense(mlp_vector, units=1, activation=tf.identity)
             self.logits = tf.reshape(mlp_vector_out, shape=[-1])
             self.pred_y = tf.sigmoid(self.logits)
 
-    def regularizer(self):
-        with tf.variable_scope('Model', reuse=True):
-            if self.regs_user:
-                tf.add_to_collection('regs',
-                                    tf.contrib.layers.apply_regularization(
-                                    tf.contrib.layers.l2_regularizer(scale=self.regs_user),
-                                    [tf.get_variable('user_embed')]))
-            if self.regs_item:
-                tf.add_to_collection('regs',
-                                    tf.contrib.layers.apply_regularization(
-                                    tf.contrib.layers.l2_regularizer(scale=self.regs_item),
-                                    [tf.get_variable('item_embed')]))
-    def loss(self):
-        with tf.name_scope('Loss'):
-            loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=tf.cast(self.labels,tf.float32), logits=self.logits)
-            # Regularization
-            self.regularizer()
-            reg_losses = tf.get_collection('regs')+tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
-            self.loss = tf.add_n([loss] + reg_losses, name="loss")
+            # Loss
+            base_loss = tf.reduce_sum(tf.nn.sigmoid_cross_entropy_with_logits(labels=self.labels, logits=self.logits))
+            reg_loss  = self.regs_user * tf.nn.l2_loss(embed_layer_user)+\
+                        self.regs_item * tf.nn.l2_loss(embed_layer_item)+\
+                        tf.add_n(tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES))
+            self.loss = base_loss + reg_loss
 
-    def optimizer(self):
-        with tf.name_scope('Optimizer'):
+            # Optimizer
             self.opt = tf.train.AdamOptimizer(self.lr).minimize(self.loss)
 
-    def metrics(self):
-        with tf.name_scope('Metrics'):
-            pred = tf.cast(tf.round(self.pred_y), tf.int32)
-            # Calculate the MAP and RMSE of the prediction results
-            _, self.map = tf.metrics.mean_absolute_error(predictions=pred, labels=self.labels)
-            _, self.rms = tf.metrics.root_mean_squared_error(predictions=pred, labels=self.labels)
+            # Metrics
+            self.rms = tf.sqrt(tf.reduce_mean(tf.square(self.labels - self.pred_y)))
+            self.mae = tf.reduce_mean(tf.abs(self.labels - self.pred_y))
 
-    def build(self):
-        self.model()
-        self.loss()
-        self.optimizer()
-        self.metrics()
-        print('Model Building Completed.')
+            print('Model Building Completed.')
 
 ############################################### Functions to run the model #############################################
     def train_one_epoch(self, epoch):
         uid, iid, lb = gtl.shuffle_list(self.train_uid, self.train_iid, self.train_labels)
 
-        n_batches,total_loss,total_map,total_rms = 0,0,0,0
+        n_batches,total_loss,total_mae,total_rms = 0,0,0,0
         for i in range(self.num_batch):
             batch_user = uid[i * self.batch_size:(i + 1) * self.batch_size]
             batch_item = iid[i * self.batch_size:(i + 1) * self.batch_size]
             batch_labels = lb[i * self.batch_size:(i + 1) * self.batch_size]
 
-            _, l, map, rms = self.session.run([self.opt, self.loss, self.map, self.rms],
+            _, l, mae, rms = self.session.run([self.opt, self.loss, self.mae, self.rms],
                                         feed_dict={self.uid: batch_user,self.iid: batch_item,self.labels: batch_labels})
+
             n_batches += 1
             total_loss += l
-            total_map += map
+            total_mae += mae
             total_rms += rms
 
             if self.verbose:
                 if n_batches % self.skip_step == 0:
                     print("Epoch {0} Batch {1}: [Loss] = {2} [MAE] = {3}"
-                          .format(epoch, n_batches, total_loss / n_batches, total_map / n_batches))
-
-        print("Epoch {0}: [Loss] {1}".format(epoch, total_loss / n_batches))
-        print("Epoch {0}: [MAE] {1} and [RMS] {2}".format(epoch, total_map / n_batches, total_rms / n_batches))
+                          .format(epoch, n_batches, total_loss / n_batches, total_mae / n_batches))
+        if self.verbose:
+            print("Epoch {0}: [Loss] {1}".format(epoch, total_loss / n_batches))
+            print("Epoch {0}: [MAE] {1} and [RMS] {2}".format(epoch, total_mae / n_batches, total_rms / n_batches))
 
     def eval_one_epoch(self, epoch):
-        # Get the ranking list for each user
-        uid, iid = [],[]
-        for u in range(self.num_user):
-            uid.extend([u] * self.num_ranking_list)
-            iid.extend(self.test_dict[u])
+        n_batches,total_hr,total_ndcg,total_mrr = 0,0,0,0
 
-        batch_size = self.num_ranking_list
+        for u in self.ranking_dict:
+            uid = [u] * len(self.ranking_dict[u])
+            iid = self.ranking_dict[u]
 
-        n_batches,n_mrr,total_hr,total_ndcg,total_mrr = 0,0,0,0,0
-        for i in range(self.num_user):
-            batch_uid, batch_iid = uid[i * batch_size:(i+1) * batch_size], iid[i * batch_size:(i+1) * batch_size]
-            rk = self.session.run(self.pred_y, feed_dict={self.uid: batch_uid, self.iid: batch_iid})
-            _, hr, ndcg, mrr = evl.evalTopK(rk, batch_iid, self.topk)
+            rk = self.session.run(self.pred_y, feed_dict={self.uid: uid, self.iid: iid})
+
+            hr, ndcg, mrr = evl.rankingMetrics(rk, iid, self.topk, self.test_dict[u])
+
             n_batches += 1
             total_hr += hr
             total_ndcg += ndcg
-            if np.isinf(mrr):
-                pass
-            else:
-                n_mrr += 1
-                total_mrr += mrr
-        print("Epoch {0}: [HR] {1} and [nDCG@{2}] {3}".format(epoch, total_hr/n_batches, self.topk, total_ndcg/n_batches))
+            total_mrr += mrr
+
+        print("Epoch {0}: [HR] {1} and [MRR] {2} and [nDCG@{3}] {4}".format(epoch, total_hr/n_batches, total_mrr / n_batches, self.topk, total_ndcg/n_batches))
 
     # Final Training of the model
     def train(self):
-        self.session.run([tf.global_variables_initializer(),tf.local_variables_initializer()])
+        self.session.run(tf.global_variables_initializer())
         self.eval_one_epoch(-1)
         for i in range(self.epochs):
             self.train_one_epoch(i)
             self.eval_one_epoch(i)
+
 ########################################################################################################################
 
 ######################################## Parse Arguments ###############################################################
 def parseArgs():
     parser = argparse.ArgumentParser(description="MLP Recommendation")
-    parser.add_argument('--nfactors', type=int, default=8,
+    parser.add_argument('--nfactors', type=int, default=16,
                         help='Embedding size.')
-    parser.add_argument('--layers', nargs='?',type=str, default='[20,10]')
-    parser.add_argument('--reg_layers', nargs='?',type=str,default='[0.001,0.001]')
-    parser.add_argument('--ebregs', nargs='?', default='[0.001,0.001]', type=str,
+    parser.add_argument('--layers', nargs='?',type=str, default='[64,32,16,8]')
+    parser.add_argument('--reg_layers', nargs='?',type=str,default='[0.002,0.001,0.005,0.005]')
+
+    parser.add_argument('--ebregs', nargs='?', default='[0.002,0.002]', type=str,
                         help="Regularization constants for user and item embeddings.")
+
+    parser.add_argument('--ntest', type=int, default=1,
+                        help='Number of test items per user (Leave-N-Out).')
 
     parser.add_argument('--num_neg', type=int, default=4,
                         help='Number of negative instances to pair with a positive instance.')
@@ -201,7 +181,7 @@ def parseArgs():
     parser.add_argument('--num_rk', type=int, default=100,
                         help='The total number of negative items to be ranked when testing')
 
-    parser.add_argument('--epochs', type=int, default=100,
+    parser.add_argument('--epochs', type=int, default=500,
                         help='Number of epochs.')
     parser.add_argument('--batch_size', type=int, default=128,
                         help='Batch size.')
@@ -213,16 +193,21 @@ if __name__ == "__main__":
 
     args = parseArgs()
     num_epochs, batch_size, layers, reg_layers, \
-    reg_embs, num_neg, lr, ndcgk, num_factors, num_ranking_list = \
+    reg_embs, num_neg, lr, ndcgk, num_factors, num_ranking_list, num_test = \
     args.epochs, args.batch_size, args.layers, args.reg_layers,\
-    args.ebregs, args.num_neg, args.lr, args.ndcgk, args.nfactors, args.num_rk
+    args.ebregs, args.num_neg, args.lr, args.ndcgk, args.nfactors, args.num_rk, args.ntest
 
     layers = list(np.float32(eval(layers)))
     reg_embs = list(np.float32(eval(reg_embs)))
     reg_layers = list(np.float32(eval(reg_layers)))
 
-    original_matrix, train_matrix, test_matrix, num_users, num_items \
-        = mtl.load_as_matrix(datafile='Data/books_and_elecs_merged.csv')
+    # original_matrix, train_matrix, test_matrix, num_users, num_items \
+    #     = mtl.load_as_matrix(datafile='Data/books_and_elecs_merged.csv')
+
+    original_matrix, num_users, num_items \
+        = mtl.load_original_matrix(datafile='Data/ml-100k/u.data',header=['uid','iid','ratings','time'],sep='\t')
+    original_matrix = mtl.matrix_to_binary(original_matrix, 0)
+    train_matrix, test_matrix = mtl.matrix_split(original_matrix, opt='ranking', n_item_per_user=num_test)
 
     print("Number of users is {0}".format(num_users))
     print("Number of items is {0}".format(num_items))
@@ -237,12 +222,12 @@ if __name__ == "__main__":
                                           gpu_options=gpu_options)) as sess:
 
         model = MLP(sess,
-                    num_neg=num_neg, top_K=ndcgk, num_ranking_list=num_ranking_list,
+                    num_neg=num_neg, top_K=ndcgk, num_ranking_neg=num_ranking_list-num_test,
                     num_factors=num_factors,layers=layers, regs_emb=reg_embs, regs_layer=reg_layers,
                     lr=lr,
                     epochs=num_epochs, batch_size=batch_size,
-                    T=10 ** 3, verbose=False)
+                    T=10 ** 3, verbose=True)
 
         model.prepare_data(original_matrix=original_matrix, train_matrix=train_matrix, test_matrix=test_matrix)
-        model.build()
+        model.build_model()
         model.train()

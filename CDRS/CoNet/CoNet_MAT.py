@@ -56,11 +56,13 @@ class CoNetRec(object):
         # Extend the shorter training data
         length1, length2 = len(self.train_labels1), len(self.train_labels2)
         if length1 < length2:
-            self.train_iid1, self.train_iid1, self.train_labels1 =\
-                mtl.data_upsample_list(self.train_iid1, self.train_iid1, self.train_labels1,num_ext=length2-length1)
-        if length2 > length1:
-            self.train_iid2, self.train_iid2, self.train_labels2 = \
-                mtl.data_upsample_list(self.train_iid2, self.train_iid2, self.train_labels2,num_ext=length1-length2)
+            self.train_uid1, self.train_iid1, self.train_labels1 =\
+                mtl.data_upsample_list(self.train_uid1, self.train_iid1, self.train_labels1,num_ext=length2-length1)
+        if length2 < length1:
+            self.train_uid2, self.train_iid2, self.train_labels2 =\
+                mtl.data_upsample_list(self.train_uid2, self.train_iid2, self.train_labels2,num_ext=length1-length2)
+
+        assert len(self.train_labels1) == len(self.train_labels2)
 
         # Negative Sampling on Lists
         print("Enter NegSa")
@@ -71,24 +73,25 @@ class CoNetRec(object):
                                              0),
                                             (mtl.negative_sample_list, self.neg_dict2, self.train_uid2, self.train_iid2, self.train_labels2, self.num_neg,
                                              0)])
+
         self.train_uid1, self.train_iid1, self.train_labels1 = results[0]
         self.train_uid2, self.train_iid2, self.train_labels2 = results[1]
 
-        #self.train_uid1, self.train_iid1, self.train_labels1 \
-         #   = mtl.negative_sample_list(self.neg_dict1, self.train_uid1, self.train_iid1, self.train_labels1,num_neg=self.num_neg,neg_val=0)
-
-        #self.train_uid2, self.train_iid2, self.train_labels2 \
+        # self.train_uid1, self.train_iid1, self.train_labels1 \
+        #    = mtl.negative_sample_list(self.neg_dict1, self.train_uid1, self.train_iid1, self.train_labels1,num_neg=self.num_neg,neg_val=0)
+        #
+        # self.train_uid2, self.train_iid2, self.train_labels2 \
         #    = mtl.negative_sample_list(self.neg_dict2, self.train_uid2, self.train_iid2, self.train_labels2, num_neg=self.num_neg, neg_val=0)
         print("Leaving NegSa")
         print("Negative Sampling Time: {0}".format(time.time() - start_time))
 
-        length1, length2 = len(self.train_labels1), len(self.train_labels2)
-        self.num_training = max(length1, length2)
+        assert len(self.train_labels1) == len(self.train_labels2)
+        self.num_training = len(self.train_labels1)
         self.num_batch = int(self.num_training / self.batch_size)
 
         print("Data Preparation Completed.")
 
-    def model(self):
+    def build_model(self):
         '''
         The Collaborative Cross Network Model
         '''
@@ -152,21 +155,21 @@ class CoNetRec(object):
             # mlp_vector2_tmp = tf.nn.relu(tf.matmul(mlp_vector2,W22) + tf.matmul(mlp_vector1,H2))
 
             # Third Hidden Layer
-            mlp_vector1 = tf.layers.dense(mlp_vector1_tmp, units=16, activation=tf.nn.relu)
-            mlp_vector2 = tf.layers.dense(mlp_vector2_tmp, units=16, activation=tf.nn.relu)
+            mlp_vector1 = tf.layers.dense(mlp_vector1_tmp, units=8, activation=tf.nn.relu)
+            mlp_vector2 = tf.layers.dense(mlp_vector2_tmp, units=8, activation=tf.nn.relu)
             mlp_vector1 = tf.layers.dropout(mlp_vector1, rate=0.5)
             mlp_vector2 = tf.layers.dropout(mlp_vector2, rate=0.5)
 
-            W31 = tf.get_variable('W31', shape=[16,8], initializer=tf.random_uniform_initializer(-1,1))
-            W32 = tf.get_variable('W32', shape=[16,8], initializer=tf.random_uniform_initializer(-1,1))
-            H3 = tf.get_variable('H3', shape=[16,8], initializer=tf.random_uniform_initializer(-1,1))
+            W31 = tf.get_variable('W31', shape=[8,4], initializer=tf.random_uniform_initializer(-1,1))
+            W32 = tf.get_variable('W32', shape=[8,4], initializer=tf.random_uniform_initializer(-1,1))
+            H3 = tf.get_variable('H3', shape=[8,4], initializer=tf.random_uniform_initializer(-1,1))
 
             mlp_vector1_tmp = tf.nn.relu(tf.matmul(mlp_vector1,W31) + tf.matmul(mlp_vector2,H3))
             mlp_vector2_tmp = tf.nn.relu(tf.matmul(mlp_vector2,W32) + tf.matmul(mlp_vector1,H3))
 
             # Fourth Layer
-            mlp_vector1 = tf.layers.dense(mlp_vector1_tmp, units=8, activation=tf.nn.relu)
-            mlp_vector2 = tf.layers.dense(mlp_vector2_tmp, units=8, activation=tf.nn.relu)
+            mlp_vector1 = tf.layers.dense(mlp_vector1_tmp, units=4, activation=tf.nn.relu)
+            mlp_vector2 = tf.layers.dense(mlp_vector2_tmp, units=4, activation=tf.nn.relu)
             mlp_vector1 = tf.layers.dropout(mlp_vector1, rate=0.5)
             mlp_vector2 = tf.layers.dropout(mlp_vector2, rate=0.5)
 
@@ -186,58 +189,31 @@ class CoNetRec(object):
             self.pred_y1 = tf.sigmoid(self.logits1)
             self.pred_y2 = tf.sigmoid(self.logits2)
 
-    def regularizer(self):
-        with tf.variable_scope('Model',reuse=True):
-            if self.regs_user:
-                for name in ['reg1', 'reg2']:
-                    tf.add_to_collection(name,
-                                        tf.contrib.layers.apply_regularization(
-                                        tf.contrib.layers.l2_regularizer(scale=self.regs_user),
-                                        [tf.get_variable('user_embed')]))
-            if self.dom1_regs_item:
-                tf.add_to_collection('reg1',
-                                        tf.contrib.layers.apply_regularization(
-                                        tf.contrib.layers.l2_regularizer(scale=self.dom1_regs_item),
-                                        [tf.get_variable('item1_embed')]))
-            if self.dom2_regs_item:
-                tf.add_to_collection('reg2',
-                                        tf.contrib.layers.apply_regularization(
-                                        tf.contrib.layers.l2_regularizer(scale=self.dom2_regs_item),
-                                        [tf.get_variable('item2_embed')]))
+            # Loss
+            loss1 = tf.reduce_sum(tf.nn.sigmoid_cross_entropy_with_logits(labels=self.dom1_labels, logits=self.logits1))
+            loss2 = tf.reduce_sum(tf.nn.sigmoid_cross_entropy_with_logits(labels=self.dom2_labels, logits=self.logits2))
 
-    def loss(self):
-        with tf.name_scope('Loss'):
-            loss1 = tf.nn.sigmoid_cross_entropy_with_logits(labels=self.dom1_labels, logits=self.logits1)
-            loss2 = tf.nn.sigmoid_cross_entropy_with_logits(labels=self.dom2_labels, logits=self.logits2)
+            loss1 += self.regs_user * tf.nn.l2_loss(embed_layer_user1) +\
+                     self.dom1_regs_item * tf.nn.l2_loss(embed_layer_item1)
 
-            # Regularization
-            self.regularizer()
-            loss1 += tf.reduce_sum(tf.get_collection('reg1'))
-            loss2 += tf.reduce_sum(tf.get_collection('reg2'))
+            loss2 += self.regs_user * tf.nn.l2_loss(embed_layer_user2) +\
+                     self.dom2_regs_item * tf.nn.l2_loss(embed_layer_item2)
+
             alpha = tf.constant(self.alpha, dtype=tf.float32)
-            self.loss = tf.reduce_sum(alpha * loss1 + (1 - alpha) * loss2)
+            self.loss = alpha * loss1 + (1 - alpha) * loss2
 
-    def optimizer(self):
-        with tf.name_scope('Optimizer'):
+            # Opt
             self.opt = tf.train.AdamOptimizer(self.lr).minimize(self.loss)
 
-    def metrics(self):
-        with tf.name_scope('Metrics'):
-            pred1 = tf.cast(tf.round(self.pred_y1), tf.int32)
-            pred2 = tf.cast(tf.round(self.pred_y2), tf.int32)
+            # Metrics
+            pred1 = tf.cast(tf.round(self.pred_y1), tf.float32)
+            pred2 = tf.cast(tf.round(self.pred_y2), tf.float32)
+            self.mae1 = tf.reduce_mean(tf.abs(pred1 - self.dom1_labels))
+            self.mae2 = tf.reduce_mean(tf.abs(pred2 - self.dom2_labels))
+            self.rms1 = tf.sqrt(tf.reduce_mean(tf.square(pred1 - self.dom1_labels)))
+            self.rms2 = tf.sqrt(tf.reduce_mean(tf.square(pred2 - self.dom2_labels)))
 
-            # Calculate the MAP and RMSE of the prediction results
-            _, self.map1 = tf.metrics.mean_absolute_error(predictions=pred1, labels=self.dom1_labels)
-            _, self.map2 = tf.metrics.mean_absolute_error(predictions=pred2, labels=self.dom2_labels)
-            _, self.rms1 = tf.metrics.root_mean_squared_error(predictions=pred1, labels=self.dom1_labels)
-            _, self.rms2 = tf.metrics.root_mean_squared_error(predictions=pred2, labels=self.dom2_labels)
-
-    def build(self):
-        self.model()
-        self.loss()
-        self.optimizer()
-        self.metrics()
-        print('Model Building Completed.')
+            print('Model Building Completed.')
 
     ############################################### Functions to run the model ######################################
 
@@ -248,8 +224,8 @@ class CoNetRec(object):
 
         n_batches = 0
         total_loss = 0
-        total_map1 = 0
-        total_map2 = 0
+        total_mae1 = 0
+        total_mae2 = 0
         for i in range(self.num_batch):
             batch_user1 = uid1[i * self.batch_size:(i+1) * self.batch_size]
             batch_user2 = uid2[i * self.batch_size:(i+1) * self.batch_size]
@@ -258,21 +234,23 @@ class CoNetRec(object):
             batch_labels1 = lb1[i * self.batch_size:(i+1) * self.batch_size]
             batch_labels2 = lb2[i * self.batch_size:(i+1) * self.batch_size]
 
-            _, l, map1, map2 = self.session.run([self.opt, self.loss, self.map1, self.map2],
+            _, l, mae1, mae2 = self.session.run([self.opt, self.loss, self.mae1, self.mae2],
                                                 feed_dict={self.dom1_uid: batch_user1, self.dom2_uid: batch_user2,
                                                            self.dom1_iid: batch_item1, self.dom2_iid: batch_item2,
                                                            self.dom1_labels: batch_labels1, self.dom2_labels: batch_labels2})
             n_batches += 1
             total_loss += l
-            total_map1 += map1
-            total_map2 += map2
+            total_mae1 += mae1
+            total_mae2 += mae2
+            # total_mae1 += evl.evalMAE(batch_labels1,np.round(pred1))
+            # total_mae2 += evl.evalMAE(batch_labels2,np.round(pred2))
             if self.verbose:
                 if n_batches % self.skip_step == 0:
                     print("Epoch {0} Batch {1}: [Loss] = {2} [MAE] = {3}"
-                          .format(epoch, n_batches, total_loss/n_batches,(total_map1+total_map2)/(2*n_batches)))
+                          .format(epoch, n_batches, total_loss/n_batches,(total_mae1+total_mae2)/(2*n_batches)))
 
         print("Epoch {0}: [Loss] {1}".format(epoch, total_loss/n_batches))
-        print("Epoch {0}: [MAE] {1} and {2}".format(epoch, total_map1/n_batches, total_map2/n_batches))
+        print("Epoch {0}: [MAE] {1} and {2}".format(epoch, total_mae1/n_batches, total_mae2/n_batches))
 
     def eval_one_epoch(self, epoch):
         uid1, iid1, uid2, iid2 = [],[],[],[]
@@ -342,14 +320,14 @@ class CoNetRec(object):
 def parseArgs():
     parser = argparse.ArgumentParser(description="CoNet for Cross Domain Recommendation")
 
-    parser.add_argument('--nfactors', type=int, default=8,
+    parser.add_argument('--nfactors', type=int, default=32,
                         help='Embedding size.')
-    parser.add_argument('--ebregs', nargs='?', default='[0.001,0.001,0.001]', type=str,
+    parser.add_argument('--ebregs', nargs='?', default='[0.01,0.005,0.005]', type=str,
                         help="Regularization constants for user and item embeddings.")
-    parser.add_argument('--alpha', type=int, default=0.7,
+    parser.add_argument('--alpha', type=int, default=0.6,
                         help='The loss split ration between the two domains.')
 
-    parser.add_argument('--num_neg', type=int, default=4,
+    parser.add_argument('--num_neg', type=int, default=5,
                         help='Number of negative instances to pair with a positive instance.')
     parser.add_argument('--ndcgk', type=int, default=10,
                         help='The K value of the Top-K ranking list.')
@@ -409,5 +387,5 @@ if __name__ == "__main__":
                            test_matrix2=test_matrix2)
         # print(len(conet.test_dict1[0]),conet.test_dict1[0])
 
-        conet.build()
+        conet.build_model()
         conet.train()
