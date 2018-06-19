@@ -59,7 +59,7 @@ class MLP(object):
         print("Data Preparation Completed.")
 
     def build_model(self):
-        with tf.variable_scope('Model'):
+        with tf.variable_scope('Model',reuse=tf.AUTO_REUSE):
             self.uid = tf.placeholder(dtype=tf.int32, shape=[None], name='user_id')
             self.iid = tf.placeholder(dtype=tf.int32, shape=[None], name='item_id')
             self.labels = tf.placeholder(dtype=tf.float32, shape=[None], name='labels')
@@ -76,8 +76,10 @@ class MLP(object):
             embed_layer_user = tf.nn.embedding_lookup(embeddings_user, self.uid)
             embed_layer_item = tf.nn.embedding_lookup(embeddings_item, self.iid)
 
-            # First Hidden Layer
+            # Concatenation
             mlp_vector = tf.concat([embed_layer_user, embed_layer_item], axis=1)
+
+            # Dense Layers
             assert len(self.layers) == len(self.regs_layer)
             for i in range(len(self.layers)):
                 mlp_vector = tf.layers.dense(mlp_vector, units=self.layers[i], activation=tf.nn.relu,
@@ -204,11 +206,14 @@ if __name__ == "__main__":
     # original_matrix, train_matrix, test_matrix, num_users, num_items \
     #     = mtl.load_as_matrix(datafile='Data/books_and_elecs_merged.csv')
 
-    original_matrix, num_users, num_items \
+    original_matrix \
         = mtl.load_original_matrix(datafile='Data/ml-100k/u.data',header=['uid','iid','ratings','time'],sep='\t')
+
     original_matrix = mtl.matrix_to_binary(original_matrix, 0)
+
     train_matrix, test_matrix = mtl.matrix_split(original_matrix, opt='ranking', n_item_per_user=num_test)
 
+    num_users, num_items = original_matrix.shape
     print("Number of users is {0}".format(num_users))
     print("Number of items is {0}".format(num_items))
     print("Number of ratings for all is {0}".format(original_matrix.nnz))

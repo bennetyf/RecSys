@@ -13,8 +13,8 @@ import Utils.RecEval as evl
 import Utils.MatUtils as mtl
 import Utils.GenUtils as gtl
 
-############################################### The MLP Model ##########################################################
-# Define the class for MLP
+############################################### The GMF Model ##########################################################
+# Define the class for GMF
 class GMF(object):
     def __init__(self, sess, num_neg, top_K = 10, num_ranking_neg = 0,
                  num_factors=32, regs_emb=[0,0],
@@ -57,7 +57,7 @@ class GMF(object):
         print("Data Preparation Completed.")
 
     def build_model(self):
-        with tf.variable_scope('Model'):
+        with tf.variable_scope('Model',reuse=tf.AUTO_REUSE):
             self.uid = tf.placeholder(dtype=tf.int32, shape=[None], name='user_id')
             self.iid = tf.placeholder(dtype=tf.int32, shape=[None], name='item_id')
             self.labels = tf.placeholder(dtype=tf.float32, shape=[None], name='labels')
@@ -139,7 +139,7 @@ class GMF(object):
 
     # Final Training of the model
     def train(self):
-        self.session.run([tf.global_variables_initializer(),tf.local_variables_initializer()])
+        self.session.run(tf.global_variables_initializer())
         self.eval_one_epoch(-1)
         for i in range(self.epochs):
             self.train_one_epoch(i)
@@ -187,11 +187,13 @@ if __name__ == "__main__":
     # original_matrix, train_matrix, test_matrix, num_users, num_items \
     #     = mtl.load_as_matrix(datafile='Data/books_and_elecs_merged.csv')
 
-    original_matrix, num_users, num_items \
+    original_matrix \
         = mtl.load_original_matrix(datafile='Data/ml-100k/u.data',header=['uid','iid','ratings','time'],sep='\t')
     original_matrix = mtl.matrix_to_binary(original_matrix, 0)
     train_matrix, test_matrix = mtl.matrix_split(original_matrix, opt='ranking', n_item_per_user=num_test)
 
+
+    num_users, num_items = original_matrix.shape
     print("Number of users is {0}".format(num_users))
     print("Number of items is {0}".format(num_items))
     print("Number of ratings for all is {0}".format(original_matrix.nnz))

@@ -44,7 +44,7 @@ class BPRMF(object):
         print("Data Preparation Completed.")
 
     def build_model(self):
-        with tf.variable_scope('Model'):
+        with tf.variable_scope('Model',reuse=tf.AUTO_REUSE):
             self.uid = tf.placeholder(dtype=tf.int32, shape=[None], name='user_id')
             self.iid = tf.placeholder(dtype=tf.int32, shape=[None], name='item_id')
             self.neg_iid = tf.placeholder(dtype=tf.int32, shape=[None], name='neg_item_id')
@@ -174,10 +174,13 @@ if __name__ == "__main__":
     # original_matrix, train_matrix, test_matrix, num_users, num_items \
     #     = mtl.load_as_matrix(datafile='Data/books_and_elecs_merged.csv')
 
-    original_matrix, num_users, num_items \
+    original_matrix \
         = mtl.load_original_matrix(datafile='Data/ml-100k/u.data', header=['uid', 'iid', 'ratings', 'time'], sep='\t')
+
     original_matrix = mtl.matrix_theshold(original_matrix,threshold=2)
+
     original_matrix = mtl.matrix_to_binary(original_matrix,0)
+
     train_matrix, test_matrix = mtl.matrix_split(original_matrix,n_item_per_user=num_test)
 
 

@@ -55,7 +55,7 @@ class WRMF(object):
         self.num_batch = int(self.num_training / self.batch_size)
         print("Data Preparation Completed.")
 
-    def build_model(self):
+    def build_model(self,reuse=tf.AUTO_REUSE):
         with tf.variable_scope('Model'):
             # Inputs
             self.uid = tf.placeholder(dtype=tf.int32, shape=[None], name='user_id')
@@ -263,7 +263,7 @@ if __name__ == "__main__":
     # original_matrix, train_matrix, test_matrix,num_users, num_items \
     #     = mtl.load_as_matrix(datafile='Data/ml-100k/u.data', header=['uid', 'iid', 'ratings', 'time'], sep='\t')
 
-    original_matrix, num_users, num_items \
+    original_matrix \
         = mtl.load_original_matrix(datafile='Data/ml-100k/u.data', header=['uid', 'iid', 'ratings', 'time'], sep='\t')
 
     original_matrix = mtl.matrix_theshold(original_matrix,threshold=2)

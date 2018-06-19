@@ -7,6 +7,7 @@ import tensorflow as tf
 import numpy as np
 import argparse
 
+import Utils.RecEval as evl
 import Utils.MatUtils as mtl
 import Utils.GenUtils as gtl
 
@@ -39,7 +40,7 @@ class SVD(object):
         print("Data Preparation Completed.")
 
     def build_model(self):
-        with tf.variable_scope('Model'):
+        with tf.variable_scope('Model',reuse=tf.AUTO_REUSE):
             # Inputs
             self.uid = tf.placeholder(dtype=tf.int32, shape=[None], name='user_id')
             self.iid = tf.placeholder(dtype=tf.int32, shape=[None], name='item_id')
@@ -125,9 +126,9 @@ class SVD(object):
 
     def eval_one_epoch(self, epoch):
         # Get the ranking list for each user
-        uid, iid, ratings = self.test_uid, self.test_iid, self.test_ratings
-        mae,rms = self.session.run([self.mae, self.rms], feed_dict={self.uid:uid, self.iid:iid, self.ratings:ratings})
-        print("Epoch {0} Testing:  [MAE] {1} and [RMS] {2}".format(epoch,mae,rms))
+        mae, rms = self.session.run([self.mae, self.rms],
+                                    feed_dict={self.uid:self.test_uid, self.iid:self.test_iid, self.ratings:self.test_ratings})
+        print("Epoch {0} Testing:  [MAE] {1} and [RMS] {2}".format(epoch, mae, rms))
 
     # Final Training of the model
     def train(self):
@@ -180,13 +181,13 @@ def parseArgs():
     parser.add_argument('--regs_ui', nargs='?', default='[0.02,0.02]', type=str,
                         help="Regularization constants for user and item embeddings.")
 
-    parser.add_argument('--regs_bias', nargs='?', default='[0.02,0.02]', type=str)
+    parser.add_argument('--regs_bias', nargs='?', default='[0.01,0.01]', type=str)
 
-    parser.add_argument('--epochs', type=int, default=500,
+    parser.add_argument('--epochs', type=int, default=100,
                         help='Number of epochs.')
-    parser.add_argument('--batch_size', type=int, default=128,
+    parser.add_argument('--batch_size', type=int, default=256,
                         help='Batch size.')
-    parser.add_argument('--lr', type=float, default=0.005,
+    parser.add_argument('--lr', type=float, default=0.0015,
                         help='Learning rate.')
 
     return parser.parse_args()
@@ -199,18 +200,19 @@ if __name__ == "__main__":
     args.epochs, args.batch_size, args.lr,\
     args.regs_ui, args.regs_bias,args.nfactors
 
-
     regs_ui = list(np.float32(eval(regs_ui)))
     regs_bias = list(np.float32(eval(regs_bias)))
 
-    # original_matrix, train_matrix, test_matrix, num_users, num_items \
-    #     = mtl.load_as_matrix(datafile='Data/ml-100k/u.data',header=['uid','iid','ratings','time'],sep='\t',opt='random',test_size=0.2)
+    original_matrix \
+        = mtl.load_original_matrix(datafile='Data/ml-1m/ratings.dat', header=['uid', 'iid', 'ratings', 'time'], sep='::')
 
-    original_matrix, num_users, num_items \
-        = mtl.load_original_matrix(datafile='Data/ml-100k/u.data', header=['uid', 'iid', 'ratings', 'time'], sep='\t')
-    train_matrix, test_matrix = mtl.matrix_split(original_matrix, opt='prediction', test_size=0.1)
+    train_matrix, test_matrix = mtl.matrix_split(original_matrix, opt='prediction', mode='user', test_size=0.1, seed=42)
+    # gtl.matrix_to_mat('svd_all.mat',opt='all',train_all=train_matrix, test_all=test_matrix)
+    # gtl.matrix_to_excel('svd_all.xlsx',opt='coo',train_all=train_matrix, test_all=test_matrix)
+    # print("Saved!")
 
     gpu_options = tf.GPUOptions(allow_growth=True)
+
     with tf.Session(config=tf.ConfigProto(allow_soft_placement=True,
                                           intra_op_parallelism_threads=8,
                                           inter_op_parallelism_threads=8,
@@ -220,8 +222,8 @@ if __name__ == "__main__":
                  lr=lr,
                  epochs=num_epochs, batch_size=batch_size, T=500, verbose=False)
 
+        # for train_matrix, test_matrix in mtl.matrix_cross_validation(original_matrix, n_splits=5, seed=0):
         model.prepare_data(original_matrix=original_matrix, train_matrix=train_matrix, test_matrix=test_matrix)
-
         model.build_model()
         model.train()
         # model.build_model_np()

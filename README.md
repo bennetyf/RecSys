@@ -1,5 +1,9 @@
-# This is a Project for Cross-Domain Recommender Systems
+# This is a Project for Recommender Systems
 
-### This project aims to develop new algorithms on cross-domain recommender systems using deep learning
+### This project aims to develop new algorithms on recommender systems using various methods:
+
+* Matrix Factorization
+* Deep Learning
+* Others
 
 ### The datasets used are ignored in this repository
