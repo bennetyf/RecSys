@@ -24,25 +24,70 @@ def predictionMetrics(labels, predictions):
     return MAE(labels, predictions), RMS(labels, predictions)
 
 ############# Top-K Ranking Metrics
+def Precision_and_Recall(ranklist, itemdict):
+    rankinglist = np.asarray(ranklist, dtype=np.int32).flatten()
+    testinglist = np.asarray(list(itemdict.keys()), dtype=np.int32).flatten()
+
+    sum_relevant_item = 0
+    for item in testinglist:
+        if item in rankinglist:
+            sum_relevant_item += 1
+
+    precision = sum_relevant_item / len(rankinglist)
+    recall = sum_relevant_item / len(testinglist)
+    return precision, recall
+
+def Recall(ranklist, itemdict):
+    rankinglist = np.asarray(ranklist, dtype=np.int32).flatten()
+    testinglist = np.asarray(list(itemdict.keys()), dtype=np.int32).flatten()
+
+    sum_relevant_item = 0
+    for item in testinglist:
+        if item in rankinglist:
+            sum_relevant_item += 1
+
+    return sum_relevant_item / len(testinglist)
+
+def AP(ranklist, itemdict):
+    rankinglist = np.asarray(ranklist, dtype=np.int32).flatten()
+    testinglist = np.asarray(list(itemdict.keys()), dtype=np.int32).flatten()
+
+    precision, rel = [], []
+    for k in range(len(rankinglist)): # Loop the ranking list and calculate each precision for each loop
+
+        if rankinglist[k] in testinglist: # The k-th item is relevant
+            rel.append(1)
+        else:
+            rel.append(0)
+
+        sum_relevant_item = 0       # Precision up-to k-th item
+        rkl = rankinglist[:k+1]
+        for item in testinglist:
+            if item in rkl:
+                sum_relevant_item += 1
+        precision.append(sum_relevant_item / len(rkl))
+
+    return np.sum(np.asarray(precision) * np.asarray(rel)) / min(len(rankinglist), len(testinglist))
+
 def HR(ranklist, itemdict):
-    rkl = np.asarray(ranklist, dtype=np.int32).flatten()
-    itl = np.asarray(list(itemdict.keys()), dtype=np.int32).flatten()
+    rankinglist = np.asarray(ranklist, dtype=np.int32).flatten()
+    testinglist = np.asarray(list(itemdict.keys()), dtype=np.int32).flatten()
 
-    sum_hit = 0.0
-    for item in itl:
-        if item in rkl:
-            sum_hit += 1
+    assert len(testinglist) == 1 # In calculating hit rate, the length of the item list must be 1
 
-    return sum_hit / len(itl)
+    if testinglist[0] in rankinglist:
+        return 1
+    else:
+        return 0
 
 def NDCG(ranklist, itemdict):
-    rkl = np.asarray(ranklist,dtype=np.int32).flatten()
-    itl = np.asarray(list(itemdict.keys()),dtype=np.int32).flatten()
+    rankinglist = np.asarray(ranklist,dtype=np.int32).flatten()
+    testinglist = np.asarray(list(itemdict.keys()),dtype=np.int32).flatten()
 
     dcg_sum = 0.0
-    for item in itl:
-        if item in rkl:
-            idx = np.argwhere(rkl == item).item()
+    for item in testinglist:
+        if item in rankinglist:
+            idx = np.argwhere(rankinglist == item).item()
             dcg_sum += itemdict[item] / np.log2(idx+2) # Get the DCG sum
 
     idcg_sum, pos = 0.0, 0.0
@@ -55,19 +100,19 @@ def NDCG(ranklist, itemdict):
     return dcg_sum / idcg_sum
 
 def MRR(ranklist, itemdict):
-    rkl = np.asarray(ranklist).flatten()
-    itl = np.asarray(list(itemdict.keys()), dtype=np.int32).flatten()
+    rankinglist = np.asarray(ranklist).flatten()
+    testinglist = np.asarray(list(itemdict.keys()), dtype=np.int32).flatten()
 
     sum_rr = 0.0
-    for item in itl:
-        if item in rkl:
-            idx = np.argwhere(rkl == item).item()
+    for item in testinglist:
+        if item in rankinglist:
+            idx = np.argwhere(rankinglist == item).item()
             sum_rr += 1.0/(idx+1)
 
-    return sum_rr / len(itl)
+    return sum_rr / len(testinglist)
 
 # Calculate all relevant ranking metrics
-def rankingMetrics(scores, itemlist, K, test_itemdict):
+def rankingMetrics(scores, itemlist, K, test_itemdict, mod = 'hr'):
     assert len(scores) == len(itemlist)
     # Construct the score list
     scoredict = {}
@@ -77,7 +122,12 @@ def rankingMetrics(scores, itemlist, K, test_itemdict):
     # Get the top K scored items
     ranklist = heapq.nlargest(K, scoredict, key=scoredict.get)
 
-    return HR(ranklist, test_itemdict), NDCG(ranklist,test_itemdict), MRR(ranklist,test_itemdict)
+    if mod == 'hr':
+        return HR(ranklist, test_itemdict), NDCG(ranklist, test_itemdict)
+    if mod == 'precision':
+        precision, recall = Precision_and_Recall(ranklist, test_itemdict)
+        avg_precision = AP(ranklist, test_itemdict)
+        return precision, recall, avg_precision
 
 ############# Top-K Ranking Metrics (Old)
 

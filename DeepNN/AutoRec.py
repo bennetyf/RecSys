@@ -2,7 +2,7 @@ import sys,os
 sys.path.append('/share/scratch/fengyuan/Projects/RecSys/')
 
 # os.environ['TF_CPP_MIN_LOG_LEVEL']='2'
-os.environ["CUDA_VISIBLE_DEVICES"]="0"
+os.environ["CUDA_VISIBLE_DEVICES"]="1"
 
 import tensorflow as tf
 import numpy as np
@@ -37,7 +37,7 @@ class AutoRec(object):
     def prepare_data(self, original_matrix, train_matrix, test_matrix):
         self.num_user, self.num_item = original_matrix.shape
 
-        gtl.set_random_seed(73) # Set random seed for the program (shuffling)
+        # gtl.set_random_seed(100) # Set random seed for the program (shuffling)
 
         if self.model == 'item':
             self.train_array, self.test_array = train_matrix.toarray().T, test_matrix.toarray().T
@@ -51,41 +51,51 @@ class AutoRec(object):
 
     def build_model(self):
         with tf.variable_scope('Model',reuse=tf.AUTO_REUSE):
+            self.istraining = tf.placeholder(dtype=tf.bool, shape=[], name='training_flag')
             self.dropout_rate = tf.placeholder(dtype=tf.float32, shape=[], name='dropout_rate')
 
             if self.model == 'item':
                 self.ratings = tf.placeholder(dtype=tf.float32, shape=[None,self.num_user], name='ratings')
+                # scale = np.sqrt(1.0 / (self.num_factors))
             else:
                 self.ratings = tf.placeholder(dtype=tf.float32, shape=[None,self.num_item], name='ratings')
+                # scale = np.sqrt(1.0 / (self.num_factors))
 
             # Auto Encoder
             layer1 = tf.layers.dense(self.ratings,
                                     units=self.num_factors, activation=tf.nn.sigmoid, use_bias=True,
-                                    kernel_initializer=tf.truncated_normal_initializer(mean=0.0,stddev=0.1),
+                                    # kernel_initializer=tf.random_uniform_initializer(-scale, scale),
+                                    kernel_initializer=tf.truncated_normal_initializer(0,0.03),
                                     kernel_regularizer=tf.contrib.layers.l2_regularizer(scale=self.regs[0]),
                                     bias_initializer=tf.zeros_initializer(),
                                     name='layer1')
 
-            layer1_out = tf.layers.dropout(layer1, rate=self.dropout_rate, name='layer1_dropout')
+            layer1_out = tf.cond(self.istraining,
+                                 lambda: tf.layers.dropout(layer1, rate=self.dropout_rate, name='layer1_dropout'),
+                                 lambda: layer1)
 
             if self.model == 'item':
-                self.out_vector = tf.layers.dense(layer1_out,
+                out_vector = tf.layers.dense(layer1_out,
                                             units=self.num_user, activation=tf.identity, use_bias=True,
-                                            kernel_initializer=tf.truncated_normal_initializer(mean=0.0, stddev=0.1),
+                                            # kernel_initializer=tf.random_uniform_initializer(-scale, scale),
+                                            kernel_initializer=tf.truncated_normal_initializer(0, 0.03),
                                             kernel_regularizer=tf.contrib.layers.l2_regularizer(scale=self.regs[1]),
                                             bias_initializer=tf.zeros_initializer(),
                                             name='output')
             else:
-                self.out_vector = tf.layers.dense(layer1_out,
-                                            units=self.num_item, activation=tf.identity, use_bias=True,
-                                            kernel_initializer=tf.truncated_normal_initializer(mean=0.0, stddev=0.1),
+                out_vector = tf.layers.dense(layer1_out,
+                                            units=self.num_item, activation=tf.identity, use_bias=False,
+                                            # kernel_initializer=tf.random_uniform_initializer(-scale, scale),
+                                            kernel_initializer=tf.truncated_normal_initializer(0, 0.03),
                                             kernel_regularizer=tf.contrib.layers.l2_regularizer(scale=self.regs[1]),
                                             bias_initializer=tf.zeros_initializer(),
                                             name='output')
 
             # Output
             out_mask = tf.sign(self.ratings)
-            self.pred_y = tf.multiply(self.out_vector, out_mask)
+            self.pred_y = tf.cond(self.istraining,
+                                  lambda: tf.multiply(out_vector, out_mask),
+                                  lambda: out_vector)
 
             # Loss
             base_loss = tf.reduce_sum(tf.square(self.ratings - self.pred_y))
@@ -93,7 +103,12 @@ class AutoRec(object):
             self.loss = base_loss + reg_loss
 
             # Optimizer
-            self.opt = tf.train.AdamOptimizer(self.lr).minimize(self.loss)
+
+            optimizer = tf.train.RMSPropOptimizer(self.lr)
+            gvs = optimizer.compute_gradients(self.loss)
+            capped_gvs = [(tf.clip_by_value(grad, -5., 5.), var) for grad, var in gvs]
+
+            self.opt = optimizer.apply_gradients(capped_gvs)
 
             # Metrics
             self.rms = tf.sqrt(tf.reduce_sum(tf.square(self.ratings - self.pred_y)) / tf.reduce_sum(out_mask))
@@ -103,20 +118,24 @@ class AutoRec(object):
 
 ############################################### Functions to run the model #############################################
     def train_one_epoch(self, epoch):
-        # random_idx = np.random.permutation(self.train_array.shape[0])
-        np.random.shuffle(self.train_array)
+        random_idx = np.random.permutation(self.train_array.shape[0])
+        # np.random.shuffle(self.train_array)
 
         n_batches,total_loss,total_mae,total_rms = 0,0,0,0
         for i in range(self.num_batch):
 
             if i == self.num_batch -1:
-                batch_ratings = self.train_array[i * self.batch_size:,:]
+                batch_ratings = self.train_array[random_idx[i * self.batch_size:],:]
+                # batch_ratings = self.train_array[i * self.batch_size:, :]
             else:
-                batch_ratings = self.train_array[i * self.batch_size: (i + 1) * self.batch_size,:]
+                batch_ratings = self.train_array[random_idx[i * self.batch_size: (i + 1) * self.batch_size],:]
+                # batch_ratings = self.train_array[i * self.batch_size: (i + 1) * self.batch_size, :]
 
             _, l, mae, rms = \
                 self.session.run([self.opt, self.loss, self.mae, self.rms],
-                                              feed_dict={self.ratings: batch_ratings, self.dropout_rate:0.2})
+                                              feed_dict={self.ratings: batch_ratings,
+                                                         self.istraining:True,
+                                                         self.dropout_rate:0.2})
 
             n_batches += 1
             total_loss += l
@@ -133,18 +152,20 @@ class AutoRec(object):
 
     def eval_one_epoch(self, epoch):
         # Input the training data to predict the ratings in the test array
-        nn_out = self.session.run(self.out_vector, feed_dict={self.ratings: self.test_array, self.dropout_rate: 0})
-        nn_out.clip(min=1, max=5)
+        pred_y = self.session.run(self.pred_y, feed_dict={self.ratings:self.train_array,
+                                                          self.istraining:False,
+                                                          self.dropout_rate: 0})
+        pred_y = pred_y.clip(min=1, max=5)
 
         # Extract the nonzero rating indices of the test array from the prediction and test array
-        pred = nn_out[self.test_array.nonzero()]
+        prediction = pred_y[self.test_array.nonzero()]
         truth = self.test_array[self.test_array.nonzero()]
 
         # Calculate Metrics
-        mae = np.mean(np.abs(truth-pred))
-        rms = np.sqrt(np.mean(np.square(truth-pred)))
-        print("Testing Epoch {0} :  [MAE] {1} and [RMS] {2}".format(epoch, mae, rms))
+        mae = np.mean(np.abs(truth-prediction))
+        rms = np.sqrt(np.mean(np.square(truth-prediction)))
 
+        print("Testing Epoch {0} :  [MAE] {1} and [RMS] {2}".format(epoch, mae, rms))
         return mae, rms
 
     # Final Training of the model
@@ -179,7 +200,6 @@ class AutoRec(object):
 
     # Restore the model
     def restore_model(self, datafile, verbose=False):
-        assert os.path.exists(datafile)
         saver = tf.train.Saver()
         saver.restore(self.session, datafile)
         if verbose:
@@ -199,18 +219,17 @@ def parseArgs():
     parser.add_argument('--nfactors', type=int, default=500,
                         help='Embedding size.')
 
-    parser.add_argument('--model', type=str, default='user', choices=['user','item'])
+    parser.add_argument('--model', type=str, default='item', choices=['user','item'])
 
-    parser.add_argument('--regs', nargs='?', default='[3,3]', type=str,
+    parser.add_argument('--regs', nargs='?', default='[32,2]', type=str,
                         help="Regularization constants for the network variables.")
 
-    parser.add_argument('--epochs', type=int, default=1000,
+    parser.add_argument('--epochs', type=int, default=2000,
                         help='Number of epochs.')
-    parser.add_argument('--batch_size', type=int, default=512,
+    parser.add_argument('--batch_size', type=int, default=128,
                         help='Batch size.')
-    parser.add_argument('--lr', type=float, default=0.004,
+    parser.add_argument('--lr', type=float, default=0.0001,
                         help='Learning rate.')
-
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -224,11 +243,11 @@ if __name__ == "__main__":
     regs = list(np.float32(eval(regs)))
 
     # original_matrix \
-    #     = mtl.load_original_matrix(datafile='Data/ml-1m/ratings.dat', header=['uid', 'iid', 'ratings', 'time'], sep='::')
+    #     = mtl.load_original_matrix(datafile='Data/ml-100k/u.data', header=['uid', 'iid', 'ratings', 'time'], sep='\t')
     #
-    # train_matrix, test_matrix = mtl.matrix_split(original_matrix, opt='prediction', mode='user', test_size=0.1, seed=10)
+    # train_matrix, test_matrix = mtl.matrix_split(original_matrix, opt='prediction', mode='user', test_size=0.2, seed=10)
     #
-    # gtl.matrix_to_mat('AutoRec_Data.mat', opt='coo', original=original_matrix,train=train_matrix,test=test_matrix)
+    # gtl.matrix_to_mat('Data/UAutoRec_ML100K_80_Data.mat', opt='coo', original=original_matrix,train=train_matrix,test=test_matrix)
 
     data = gtl.load_mat_as_matrix('Data/UAutoRec_ML1M_90_Data.mat',opt='coo')
     original_matrix, train_matrix, test_matrix = data['original'], data['train'], data['test']
@@ -241,9 +260,10 @@ if __name__ == "__main__":
         model = AutoRec(sess,
                         num_factors=num_factors, regs=regs, model=model_type,
                         lr=lr,
-                        epochs=num_epochs, batch_size=batch_size, T=1000, verbose=False)
+                        epochs=num_epochs, batch_size=batch_size, T=2000, verbose=False)
 
         # for train_matrix, test_matrix in mtl.matrix_cross_validation(original_matrix, n_splits=5, seed=0):
         model.prepare_data(original_matrix=original_matrix, train_matrix=train_matrix, test_matrix=test_matrix)
         model.build_model()
-        model.train(restore=False, save=True, datafile='SavedModel/AutoRec/U_AutoRec_ML1M_90.ckpt')
+        model.evaluate('SavedModel/AutoRec/I_AutoRec_ML1M_90_2.ckpt')
+        # model.train(restore=False, save=False, datafile='SavedModel/AutoRec/I_AutoRec_ML1M_90.ckpt')

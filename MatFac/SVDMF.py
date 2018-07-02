@@ -129,14 +129,51 @@ class SVD(object):
         mae, rms = self.session.run([self.mae, self.rms],
                                     feed_dict={self.uid:self.test_uid, self.iid:self.test_iid, self.ratings:self.test_ratings})
         print("Epoch {0} Testing:  [MAE] {1} and [RMS] {2}".format(epoch, mae, rms))
+        return mae, rms
 
     # Final Training of the model
-    def train(self):
-        self.session.run(tf.global_variables_initializer())
+    def train(self, restore=False, save=False, datafile=None):
+
+        if restore:  # Restore the model from checkpoint
+            self.restore_model(datafile, verbose=True)
+        else:
+            self.session.run(tf.global_variables_initializer())
+
+        if not save:  # Do not save the model
+            self.eval_one_epoch(-1)
+            for i in range(self.epochs):
+                self.train_one_epoch(i)
+                self.eval_one_epoch(i)
+
+        else:  # Save the model while training
+            _, previous_rms = self.eval_one_epoch(-1)
+            for i in range(self.epochs):
+                self.train_one_epoch(i)
+                _, rms = self.eval_one_epoch(i)
+                if rms < previous_rms:
+                    previous_rms = rms
+                    self.save_model(datafile, verbose=False)
+
+    # Save the model
+    def save_model(self, datafile, verbose=False):
+        saver = tf.train.Saver()
+        path = saver.save(self.session, datafile)
+        if verbose:
+            print("Model Saved in Path: {0}".format(path))
+
+    # Restore the model
+    def restore_model(self, datafile, verbose=False):
+        saver = tf.train.Saver()
+        saver.restore(self.session, datafile)
+        if verbose:
+            print("Model Restored from Path: {0}".format(datafile))
+
+    # Evaluate the model
+    def evaluate(self, datafile):
+        self.restore_model(datafile, True)
         self.eval_one_epoch(-1)
-        for i in range(self.epochs):
-            self.train_one_epoch(i)
-            self.eval_one_epoch(i)
+
+########################################################################################################################
 
     # Training using SGD algorithm
     def train_one_epoch_np(self):
@@ -178,16 +215,16 @@ def parseArgs():
 
     parser.add_argument('--nfactors', type=int, default=100,
                         help='Embedding size.')
-    parser.add_argument('--regs_ui', nargs='?', default='[0.02,0.02]', type=str,
+    parser.add_argument('--regs_ui', nargs='?', default='[0.1,0.1]', type=str,
                         help="Regularization constants for user and item embeddings.")
 
-    parser.add_argument('--regs_bias', nargs='?', default='[0.01,0.01]', type=str)
+    parser.add_argument('--regs_bias', nargs='?', default='[0.1,0.1]', type=str)
 
-    parser.add_argument('--epochs', type=int, default=100,
+    parser.add_argument('--epochs', type=int, default=2000,
                         help='Number of epochs.')
-    parser.add_argument('--batch_size', type=int, default=256,
+    parser.add_argument('--batch_size', type=int, default=128,
                         help='Batch size.')
-    parser.add_argument('--lr', type=float, default=0.0015,
+    parser.add_argument('--lr', type=float, default=0.0005,
                         help='Learning rate.')
 
     return parser.parse_args()
@@ -203,13 +240,15 @@ if __name__ == "__main__":
     regs_ui = list(np.float32(eval(regs_ui)))
     regs_bias = list(np.float32(eval(regs_bias)))
 
-    original_matrix \
-        = mtl.load_original_matrix(datafile='Data/ml-1m/ratings.dat', header=['uid', 'iid', 'ratings', 'time'], sep='::')
+    # original_matrix = mtl.load_original_matrix('Data/ml-1m/ratings.dat', header=['uid', 'iid', 'ratings', 'time'], sep='::')
 
-    train_matrix, test_matrix = mtl.matrix_split(original_matrix, opt='prediction', mode='user', test_size=0.1, seed=42)
-    # gtl.matrix_to_mat('svd_all.mat',opt='all',train_all=train_matrix, test_all=test_matrix)
+    # train_matrix, test_matrix = mtl.matrix_split(original_matrix, opt='prediction', mode='user', test_size=0.1, seed=42)
+    # gtl.matrix_to_mat('SVD_ML1M_90.mat',opt='coo', original=original_matrix, train=train_matrix, test=test_matrix)
     # gtl.matrix_to_excel('svd_all.xlsx',opt='coo',train_all=train_matrix, test_all=test_matrix)
     # print("Saved!")
+
+    data = gtl.load_mat_as_matrix('Data/SVD_ML1M_90.mat', opt='coo')
+    original_matrix, train_matrix, test_matrix = data['original'], data['train'], data['test']
 
     gpu_options = tf.GPUOptions(allow_growth=True)
 
@@ -225,6 +264,9 @@ if __name__ == "__main__":
         # for train_matrix, test_matrix in mtl.matrix_cross_validation(original_matrix, n_splits=5, seed=0):
         model.prepare_data(original_matrix=original_matrix, train_matrix=train_matrix, test_matrix=test_matrix)
         model.build_model()
-        model.train()
+
+        # model.train(restore=False, save=True, datafile='SavedModel/SVDMF/SVD_ML1M_90_3.ckpt')
+        model.evaluate(datafile='SavedModel/SVDMF/SVD_ML1M_90.ckpt')
+
         # model.build_model_np()
         # model.train_np()

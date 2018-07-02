@@ -99,6 +99,7 @@ def matrix_to_excel(datafile, opt='coo', **kwargs):
                 df = pd.DataFrame(np.column_stack((coo_mat.row, coo_mat.col, coo_mat.data)))
                 df.to_excel(writer, sheet_name=name, header=False, index=False)
 
+# Load matlab format data into sparse matrix format
 def load_mat_as_matrix(datafile, opt='all'):
     raw = sio.loadmat(datafile)
 
@@ -112,7 +113,8 @@ def load_mat_as_matrix(datafile, opt='all'):
         return res_dict
 
     elif opt == 'coo':
-        return {key: sp.csr_matrix((raw[key][:,2],(raw[key][:,0],raw[key][:,1]))).tolil() for key in raw if isinstance(raw[key],np.ndarray)}
+        return {key: sp.csr_matrix((raw[key][:,2],(raw[key][:,0],raw[key][:,1]))).tolil()
+                for key in raw if isinstance(raw[key],np.ndarray)}
 
 ########################################################################################################################
 

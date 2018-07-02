@@ -122,16 +122,50 @@ class BPRMF(object):
             total_ndcg += ndcg
             total_mrr += mrr
 
-        print("Epoch {0}: [HR] {1} and [MRR] {2} and [nDCG@{3}] {4}".format(epoch, total_hr / n_batches, total_mrr / n_batches,
-                                                                            self.topK, total_ndcg / n_batches))
+        avg_hr, avg_mrr, avg_ndcg = total_hr / n_batches, total_mrr / n_batches, total_ndcg / n_batches
+        print("Epoch {0}: [HR] {1} and [MRR] {2} and [nDCG@{3}] {4}".format(epoch, avg_hr, avg_mrr, self.topK, avg_ndcg))
+        return avg_hr, avg_mrr,avg_ndcg
 
     # Final Training of the model
-    def train(self):
-        self.session.run([tf.global_variables_initializer(),tf.local_variables_initializer()])
+    def train(self, restore=False, save=False, datafile=None):
+        if restore:  # Restore the model from checkpoint
+            self.restore_model(datafile, verbose=True)
+        else:
+            self.session.run(tf.global_variables_initializer())
+
+        if not save:  # Do not save the model
+            self.eval_one_epoch(-1)
+            for i in range(self.epochs):
+                self.train_one_epoch(i)
+                self.eval_one_epoch(i)
+
+        else:  # Save the model while training
+            _, _, previous_ndcg = self.eval_one_epoch(-1)
+            for i in range(self.epochs):
+                self.train_one_epoch(i)
+                _, _, ndcg = self.eval_one_epoch(i)
+                if ndcg < previous_ndcg:
+                    previous_ndcg = ndcg
+                    self.save_model(datafile, verbose=False)
+
+    # Save the model
+    def save_model(self, datafile, verbose=False):
+        saver = tf.train.Saver()
+        path = saver.save(self.session, datafile)
+        if verbose:
+            print("Model Saved in Path: {0}".format(path))
+
+    # Restore the model
+    def restore_model(self, datafile, verbose=False):
+        saver = tf.train.Saver()
+        saver.restore(self.session, datafile)
+        if verbose:
+            print("Model Restored from Path: {0}".format(datafile))
+
+    # Evaluate the model
+    def evaluate(self, datafile):
+        self.restore_model(datafile, True)
         self.eval_one_epoch(-1)
-        for i in range(self.epochs):
-            self.train_one_epoch(i)
-            self.eval_one_epoch(i)
 
 ########################################################################################################################
 

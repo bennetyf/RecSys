@@ -46,8 +46,7 @@ def load_original_matrix(datafile, header=['uid','iid','ratings'], sep=','):
     return original_matrix.tolil()
 
 # Split train and test data using matrix as input
-def matrix_split(matrix, opt='ranking', mode='df', n_item_per_user=1, test_size=0.2, seed=None):
-    num_user, num_item = matrix.shape
+def matrix_split(matrix, opt='ranking', mode='df', n_item_per_user=1, test_size=0.2, random_state=None):
 
     if opt == 'ranking' and mode == 'df': # This is faster (Use pandas to select the n testing elements for each user)
         # Generate the pandas dataframe
@@ -78,10 +77,13 @@ def matrix_split(matrix, opt='ranking', mode='df', n_item_per_user=1, test_size=
         test_matrix = csr_matrix((element, (row, col)), shape=matrix.shape)
         return train_matrix.tolil(), test_matrix.tolil()
 
-    elif opt == 'ranking' and mode =='mat': # Using matrix method has to loop all the users causing it to be very slow
+    elif opt == 'ranking' and mode == 'mat': # Using matrix method has to loop all the users causing it to be very slow
         matrix = matrix.tolil()
         test_row, test_col, test_data = [], [], []
         train_row, train_col, train_data = [], [], []
+
+        if random_state != None:
+            np.random.seed(random_state)
 
         # Loop through the users
         for uid, (iids, ratings) in enumerate(zip(matrix.rows, matrix.data)): # Choose from index instead of from the iids directly
@@ -96,6 +98,9 @@ def matrix_split(matrix, opt='ranking', mode='df', n_item_per_user=1, test_size=
             train_col.extend([iids[i] for i in train_idx])
             train_data.extend([ratings[i] for i in train_idx])
 
+        if random_state != None:
+            np.random.seed(None) # Reset the random generator
+
         test_matrix = csr_matrix((test_data, (test_row, test_col)), shape=matrix.shape)
         train_matrix = csr_matrix((train_data, (train_row, train_col)), shape=matrix.shape)
         return train_matrix.tolil(), test_matrix.tolil()
@@ -105,7 +110,7 @@ def matrix_split(matrix, opt='ranking', mode='df', n_item_per_user=1, test_size=
         matrix = matrix.tocoo()
         arr = np.column_stack((matrix.row, matrix.col, matrix.data))
 
-        train, test = train_test_split(arr, test_size=test_size, random_state=seed) # Split data randomly
+        train, test = train_test_split(arr, test_size=test_size, random_state=random_state) # Split data randomly
 
         train_matrix = csr_matrix((train[:,2],(train[:,0],train[:,1])),shape=matrix.shape)
         test_matrix = csr_matrix((test[:,2],(test[:,0],test[:,1])),shape=matrix.shape)
@@ -118,7 +123,7 @@ def matrix_split(matrix, opt='ranking', mode='df', n_item_per_user=1, test_size=
 
         # Loop through the users
         for uid, (iids, ratings) in enumerate(zip(matrix.rows, matrix.data)):
-            train_idx, test_idx = train_test_split(range(len(iids)), test_size=test_size, random_state=seed)  # Split data randomly
+            train_idx, test_idx = train_test_split(range(len(iids)), test_size=test_size, random_state=random_state)  # Split data randomly
 
             test_row.extend([uid] * len(test_idx))
             test_col.extend([iids[i] for i in test_idx])
@@ -135,7 +140,7 @@ def matrix_split(matrix, opt='ranking', mode='df', n_item_per_user=1, test_size=
     else:
         return [],[]
 
-def matrix_cross_validation(matrix, n_splits, seed = None):
+def matrix_cross_validation(matrix, n_splits, random_state = None):
     '''
     Cross validation on each user row for n_splits
     :param matrix: original matrix as input
@@ -145,7 +150,7 @@ def matrix_cross_validation(matrix, n_splits, seed = None):
     '''
     matrix = matrix.tolil()
     num_user, num_item = matrix.shape
-    kf = KFold(n_splits=n_splits, shuffle=True, random_state=seed)
+    kf = KFold(n_splits=n_splits, shuffle=True, random_state = random_state)
 
     # Generate different kFold splitting generators for each row
     kf_dict = {}
@@ -175,7 +180,7 @@ def matrix_cross_validation(matrix, n_splits, seed = None):
         yield  train_matrix.tolil(), test_matrix.tolil()
 
 # Generate the negative dictionaries
-def negdict_mat(original_matrix, test_matrix, num_neg=0):
+def negdict_mat(original_matrix, test_matrix, mod='precision', num_neg=0, random_state=None):
     '''
     Get the negative samples for each user
     Generate the ranking list for testing
@@ -185,10 +190,11 @@ def negdict_mat(original_matrix, test_matrix, num_neg=0):
     :param num_neg:
     :return:
     '''
-    original_matrix = original_matrix.tolil()
-    test_matrix = test_matrix.tolil()
-
+    original_matrix, test_matrix = original_matrix.tolil(), test_matrix.tolil()
     num_users, num_items = original_matrix.shape
+
+    if random_state != None:
+        np.random.seed(random_state)
 
     neg_dict, ranking_dict, test_dict = {},{},{}
     for uid, (org_iids, test_iids, test_ratings) in enumerate(zip(original_matrix.rows, test_matrix.rows, test_matrix.data)):
@@ -201,15 +207,21 @@ def negdict_mat(original_matrix, test_matrix, num_neg=0):
         test_dict[uid] = dict(zip(test_iids, test_ratings))
 
         # Ranking Dict for User u
-        if num_neg == -1:
+        if mod == 'precision':
             ranking_dict[uid] = neg_list_for_u + test_iids # Put the item ids to be ranked in the end of the ranking list
         else:
-            ranking_dict[uid] = list(np.random.choice(neg_list_for_u, num_neg)) + test_iids
+            if num_neg > len(neg_list_for_u):
+                ranking_dict[uid] = list(np.random.choice(neg_list_for_u, num_neg, replace=True)) + test_iids
+            else:
+                ranking_dict[uid] = list(np.random.choice(neg_list_for_u, num_neg, replace=False)) + test_iids
+
+    if random_state != None:
+        np.random.seed(None)
 
     return neg_dict, ranking_dict, test_dict
 
 # Input the negative dictionary and u,i,r lists, return the three of the negative sampled lists
-def negative_sample_list(neg_dict, user_list, item_list, rating_list, num_neg=0, neg_val=0):
+def negative_sample_list(neg_dict, user_list, item_list, rating_list, num_neg=0, neg_val=0, random_state=None):
     '''
     Negative sampling: sample the user, item and rating lists with randomly picked negative samples
     Inputs and outputs must be lists, because duplicated elements are taken into consideration in this function
@@ -225,6 +237,10 @@ def negative_sample_list(neg_dict, user_list, item_list, rating_list, num_neg=0,
     '''
     if num_neg == 0:
         return user_list, item_list, rating_list
+
+    if random_state != None:
+        np.random.seed(random_state)
+
     res_user, res_item, res_rating = [], [], []
     for u, i, r in list(zip(user_list, item_list, rating_list)):
         res_user.extend([u] * (num_neg + 1))    # extend is faster than a loop of append
@@ -232,6 +248,10 @@ def negative_sample_list(neg_dict, user_list, item_list, rating_list, num_neg=0,
         res_rating.extend([neg_val]*num_neg)
         res_item.append(i)
         res_item.extend(list(np.random.choice(neg_dict[u],num_neg)))
+
+    if random_state != None:
+        np.random.seed(None)
+
     return res_user, res_item, res_rating
 
 # Get all the explicit and implict ratings for a matrix except for those testing data in the exp_matrix
@@ -279,13 +299,19 @@ def get_full_matrix(matrix, exp_matrix = None, opt='fast'):
         return res_user, res_item, res_rating
 
 # Upsample the data in list format
-def data_upsample_list(user_list, item_list, rating_list, num_ext = 0):
+def data_upsample_list(user_list, item_list, rating_list, num_ext = 0, random_state = None):
     user_array, item_array, rating_array = np.array(user_list), np.array(item_list), np.array(rating_list)
+
+    if random_state != None:
+        np.random.seed(random_state)
 
     if len(user_list) < num_ext:
         idxs = list(np.random.choice(range(len(user_list)), num_ext, replace = True)) # Allow replacement(Important)
     else:
         idxs = list(np.random.choice(range(len(user_list)), num_ext, replace = False))
+
+    if random_state != None:
+        np.random.seed(None)
 
     return list(np.append(user_array, user_array[idxs])), list(np.append(item_array, item_array[idxs])), list(np.append(rating_array, rating_array[idxs]))
 
@@ -341,6 +367,38 @@ def matrix_to_vectors(matrix,opt='row'):
             vec_dict[iid] = matrix.getcol(iid).getcol(iid).toarray().flatten().tolist()
 
     return vec_dict
+
+# Generate a mask array (bool values) for the selected user-item pairs in the u-i matrix
+# This mask is essential for the output layer of the auto-encoder when negative sampling is enabled for output
+def neg_mask_array(original_matrix, train_matrix, neg_ratio, random_state = None):
+
+    original_matrix, train_matrix = original_matrix.tolil(), train_matrix.tolil()
+    num_users, num_items = original_matrix.shape
+    # print(num_users, num_items)
+
+    if random_state != None:
+        np.random.seed(random_state)
+
+    negative_mask = []
+    for uid, (org_iids, train_iids) in enumerate(zip(original_matrix.rows, train_matrix.rows)):
+        neg_list_for_u = list(set(range(num_items)) - set(org_iids))  # This is faster than list comprehension
+        num_neg = int(len(train_iids) * neg_ratio)
+
+        if len(neg_list_for_u) <= num_neg: # If the number of the negative items for u is less than the desired value
+            chosen_idx = list(range(num_items)) # Select all the items
+        else:
+            chosen_idx = list(np.random.choice(neg_list_for_u, num_neg, replace=False)) # Select the negative items for uid
+            chosen_idx.extend(train_iids) # Get the ids for both training items and negative items
+
+        mask_for_u = np.zeros(num_items).astype(bool) # Generate the output mask for this user
+        if len(chosen_idx) != 0:
+            mask_for_u[np.array(chosen_idx)] = True   # Set the chosen items to be True in the final mask
+        negative_mask.append(mask_for_u.tolist()) # Append it in the final mask array
+
+    if random_state != None:
+        np.random.seed(None)
+
+    return np.array(negative_mask)
 
 
 ########################################################################################################################
