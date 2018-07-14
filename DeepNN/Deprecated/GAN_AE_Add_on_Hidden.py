@@ -18,7 +18,8 @@ class GAN_AE(object):
                  num_factors = 32, ae_regs = [0,0,0,0], user_node_reg = 0, neg_ratio = 0,
                  eps = 0.5, num_noise_factor = 64, loss_ratio = 0.0,
                  lr=0.001, is_neg_sa = False,
-                 add_concat_noise = False, add_weight_noise = False,
+                 robust_test=False,
+                 add_hidden_noise = False, add_weight_noise = False,
                  add_random_noise = False, add_adv_noise = False,
                  epochs=100, batch_size=128, T=10**3, verbose=False):
         # Parse the arguments and store them in the model
@@ -38,7 +39,8 @@ class GAN_AE(object):
         self.lr = lr
         self.is_neg_sa = is_neg_sa
 
-        self.concat_noise = add_concat_noise
+        self.robust_test = robust_test
+        self.hidden_noise = add_hidden_noise
         self.weight_noise = add_weight_noise
         self.random_noise = add_random_noise
         self.adv_noise = add_adv_noise
@@ -69,7 +71,7 @@ class GAN_AE(object):
 
             self.istraining = tf.placeholder(dtype=tf.bool, shape=[], name='training_flag')
             self.isnegsample = tf.placeholder(dtype=tf.bool, shape=[], name='negative_sample_flag')
-            self.add_concat_noise = tf.placeholder(dtype=tf.bool, shape=[], name='add_concat_noise')
+            self.add_hidden_noise = tf.placeholder(dtype=tf.bool, shape=[], name='add_hidden_noise')
             self.add_weight_noise = tf.placeholder(dtype=tf.bool, shape=[], name='add_weight_noise')
 
             self.layer1_dropout_rate = tf.placeholder(dtype=tf.float32, shape=[], name='layer1_dropout_rate')
@@ -90,132 +92,133 @@ class GAN_AE(object):
             #                             initializer=tf.truncated_normal_initializer(mean=0.0, stddev=0.03)
             #                             )
 
-            weight_noise = tf.get_variable( name='weight_noise',
-                                            shape=[self.num_factors, self.num_item],
-                                            initializer=tf.zeros_initializer(),
-                                            dtype=tf.float32,
-                                            trainable=False)
+            w2_noise = tf.get_variable(name='w2_noise',
+                                        shape=[self.num_factors, self.num_item],
+                                        initializer=tf.zeros_initializer(),
+                                        dtype=tf.float32,
+                                        trainable=False)
 
-            noise_vector_tr = tf.get_variable(name='encoder_noise_tr',
-                                              shape=[self.batch_size, self.num_noise_factor],
-                                              initializer=tf.zeros_initializer(),
-                                              dtype=tf.float32,
-                                              trainable=False)
-
-            noise_vector_eval = tf.get_variable(name='encoder_noise_eval',
-                                                shape=[self.num_user, self.num_noise_factor],
+            hidden_noise_tr = tf.get_variable(  name='hidden_noise_tr',
+                                                shape=[self.batch_size, self.num_factors],
                                                 initializer=tf.zeros_initializer(),
                                                 dtype=tf.float32,
                                                 trainable=False)
+
             # Decoder Variables
-            layer2_w1 = tf.get_variable(name='decoder_weights',
+            layer2_w = tf.get_variable(name='decoder_weights',
                                        shape=[self.num_factors, self.num_item],
-                                       initializer=tf.truncated_normal_initializer(mean=0.0, stddev=0.03))
-            layer2_w2 = tf.get_variable(name='decoder_concat',
-                                       shape=[self.num_noise_factor, self.num_item],
                                        initializer=tf.truncated_normal_initializer(mean=0.0, stddev=0.03))
             layer2_b = tf.get_variable(name='decoder_bias',
                                        shape=[self.num_item],
                                        initializer=tf.zeros_initializer())
 
-            # Noisy Model
-            layer1 = tf.sigmoid(tf.matmul(input, layer1_w) + layer1_b)
-            layer1 = tf.cond(self.add_concat_noise,
-                             lambda: tf.cond(self.istraining,
-                                            lambda:tf.concat([layer1, noise_vector_tr], axis=1),
-                                            lambda:tf.concat([layer1, noise_vector_eval], axis=1)),
-                             lambda: layer1)
-
-            # layer1 = tf.cond(self.istraining,
-            #                 lambda : tf.sigmoid(tf.matmul(input, layer1_w + layer1_delta) + layer1_b),
-            #                 lambda : tf.sigmoid(tf.matmul(input, layer1_w) + layer1_b))
-
-            layer1_out = tf.cond(self.istraining,
-                                 lambda: tf.layers.dropout(layer1, rate=self.layer1_dropout_rate, name='layer1_dropout'),
-                                 lambda: layer1)
-
-            layer2_w = tf.cond(self.add_concat_noise,
-                               lambda: tf.concat([layer2_w1, layer2_w2], axis=0),
-                               lambda: tf.cond(self.add_weight_noise, lambda: layer2_w1 + weight_noise, lambda: layer2_w1))
-
-            # self.w2 = layer2_w
-            # self.w2_org = layer2_w - weight_noise
-
-            self.w2 = tf.cond(self.add_concat_noise, lambda: tf.gather(layer2_w, [self.num_factors] ,axis=0), lambda: layer2_w)
-            self.w2_org = tf.cond(self.add_concat_noise, lambda: tf.gather(layer2_w, [self.num_factors], axis=0), lambda: layer2_w - weight_noise)
-
-            # out_vector = tf.sigmoid(tf.matmul(layer1_out, layer2_w) + layer2_b)
-            out_vector = tf.identity(tf.matmul(layer1_out, layer2_w) + layer2_b)
-            # self.b2 = layer2_b
-            # self.w2_delta = tf.squeeze(tf.matmul(tf.expand_dims(layer1_delta,0), layer2_w))
-
-            # Output
-            # Determine whether negative samples should be considered
-            mask = tf.cond(self.isnegsample,
-                           lambda: tf.cast(self.output_mask, dtype=out_vector.dtype),
-                           lambda: tf.sign(self.ratings))
-
-            self.output = tf.cond(self.istraining,
-                                  lambda: tf.multiply(out_vector, mask),
-                                  lambda: out_vector)
-
-            # self.pred_y = tf.sigmoid(self.output)
-            # self.pred_y = self.output
-
-            # Noisy Model Loss
-            # base_loss = tf.nn.l2_loss(input - self.pred_y)
-            noisy_base_loss = tf.reduce_sum(tf.nn.sigmoid_cross_entropy_with_logits(labels=input, logits=self.output))
-            noisy_base_loss = noisy_base_loss / tf.cast(tf.shape(input)[0], dtype=noisy_base_loss.dtype)  # Average over the batches
 
             # Original AE Model
-            encoder = tf.sigmoid(tf.matmul(input, layer1_w) + layer1_b)
-            encoder = tf.cond(self.istraining,
-                                 lambda: tf.layers.dropout(encoder, rate=self.layer1_dropout_rate, name='layer1_dropout'),
-                                 lambda: encoder)
-            decoder = tf.sigmoid(tf.matmul(encoder, layer2_w1) + layer2_b)
+            org_encoder = tf.sigmoid(tf.matmul(input, layer1_w) + layer1_b)
+            org_encoder = tf.cond(self.istraining,
+                                 lambda: tf.layers.dropout(org_encoder, rate=self.layer1_dropout_rate, name='layer1_dropout'),
+                                 lambda: org_encoder)
+
+            if self.robust_test:  # Robustness Testing on W2
+                org_decoder = tf.identity(tf.matmul(org_encoder, layer2_w + w2_noise) + layer2_b)
+                self.w2 = layer2_w
+                self.w2_org = layer2_w - w2_noise
+            else:
+                org_decoder = tf.identity(tf.matmul(org_encoder, layer2_w) + layer2_b)
+
+            mask = tf.cond(self.isnegsample,
+                           lambda: tf.cast(self.output_mask, dtype=org_decoder.dtype),
+                           lambda: tf.sign(self.ratings))
+
             self.org_output = tf.cond(self.istraining,
-                                  lambda: tf.multiply(decoder, mask),
-                                  lambda: decoder)
-            self.org_pred_y = tf.identity(self.org_output)
+                                        lambda: tf.multiply(org_decoder, mask),
+                                        lambda: org_decoder)
+
             org_base_loss = tf.reduce_sum(tf.nn.sigmoid_cross_entropy_with_logits(labels=input, logits=self.org_output))
             org_base_loss = org_base_loss / tf.cast(tf.shape(input)[0], dtype=org_base_loss.dtype)
+
             # org_reg_loss = self.ae_regs[0] * tf.nn.l2_loss(layer1_w) + self.ae_regs[1] * tf.nn.l2_loss(layer1_b) + \
             #            self.ae_regs[2] * tf.nn.l2_loss(layer2_w2) + self.ae_regs[3] * tf.nn.l2_loss(layer2_b)
             # org_loss = org_base_loss + org_reg_loss
 
-            # Mix the outputs
-            self.mixed_output = (1-self.loss_ratio) * self.org_output + self.loss_ratio * self.output
-            self.pred_y = tf.sigmoid(self.mixed_output)
+            # Noisy Model
+            if not self.robust_test:
+                noisy_encoder = tf.sigmoid(tf.matmul(input, layer1_w) + layer1_b)
+                noisy_encoder = tf.cond(self.istraining,
+                                 lambda: noisy_encoder + hidden_noise_tr,
+                                 lambda: noisy_encoder)
+
+                # layer1 = tf.cond(self.istraining,
+                #                 lambda : tf.sigmoid(tf.matmul(input, layer1_w + layer1_delta) + layer1_b),
+                #                 lambda : tf.sigmoid(tf.matmul(input, layer1_w) + layer1_b))
+
+                noisy_encoder = tf.cond(self.istraining,
+                                        lambda: tf.layers.dropout(noisy_encoder, rate=self.layer1_dropout_rate, name='layer1_dropout'),
+                                        lambda: noisy_encoder)
+
+                self.w2 = layer2_w
+                self.w2_org = tf.cond(self.add_weight_noise, lambda: layer2_w - w2_noise, lambda: layer2_w)
+
+                noisy_decoder = tf.identity(tf.matmul(noisy_encoder, layer2_w) + layer2_b)
+
+                # Output
+                # Determine whether negative samples should be considered
+                mask = tf.cond(self.isnegsample,
+                               lambda: tf.cast(self.output_mask, dtype=noisy_decoder.dtype),
+                               lambda: tf.sign(self.ratings))
+
+                self.noisy_output = tf.cond(self.istraining,
+                                      lambda: tf.multiply(noisy_decoder, mask),
+                                      lambda: noisy_decoder)
+
+                # self.pred_y = tf.sigmoid(self.output)
+                # self.pred_y = self.output
+
+                # Noisy Model Loss
+                # base_loss = tf.nn.l2_loss(input - self.pred_y)
+                noisy_base_loss = tf.reduce_sum(tf.nn.sigmoid_cross_entropy_with_logits(labels=input, logits=self.noisy_output))
+                noisy_base_loss = noisy_base_loss / tf.cast(tf.shape(input)[0], dtype=noisy_base_loss.dtype)  # Average over the batches
+
+            ################## Mix the outputs
+            # self.mixed_output = (1-self.loss_ratio) * self.org_output + self.loss_ratio * self.output
+            self.pred_y = tf.sigmoid(self.org_output)
             # self.pred_y = self.mixed_output
 
             # Mix the losses
             # base_loss = tf.cond(tf.logical_or(self.add_concat_noise, self.add_weight_noise),
             #                     lambda : org_base_loss + self.loss_ratio * base_loss,
             #                     lambda : base_loss)
-            base_loss = (1-self.loss_ratio) * org_base_loss + self.loss_ratio * noisy_base_loss
+            if not self.robust_test:
+                base_loss = org_base_loss + self.loss_ratio * noisy_base_loss
+            else:
+                base_loss = org_base_loss
+
             reg_loss = self.ae_regs[0] * tf.nn.l2_loss(layer1_w) + self.ae_regs[1] * tf.nn.l2_loss(layer1_b) + \
                        self.ae_regs[2] * tf.nn.l2_loss(layer2_w) + self.ae_regs[3] * tf.nn.l2_loss(layer2_b)
+
             self.loss = base_loss + reg_loss
 
             # Optimizer
             self.opt = tf.train.AdagradOptimizer(self.lr).minimize(self.loss)
 
-            if self.random_noise:
-                random_noise = tf.random_normal(shape=tf.shape(layer2_w), mean=tf.reduce_mean(layer2_w), stddev=0.01)
-                self.update_delta = weight_noise.assign(self.eps * random_noise / tf.norm(random_noise))
-
-            # Gradients Computation of the Noise
-            if self.adv_noise:
-                self.grad_delta = tf.cond(self.add_concat_noise,
-                                          lambda : tf.gradients(ys = base_loss, xs = noise_vector_tr)[0],
-                                          lambda : tf.gradients(ys = base_loss, xs = weight_noise)[0])
+            # Add Noise (Random or Adversial)
+            if self.robust_test:  # Robust Testing in Evaluation
+                if self.random_noise:
+                    random_noise = tf.random_normal(shape=tf.shape(layer2_w), mean=tf.reduce_mean(layer2_w), stddev=0.01)
+                    self.update_delta = w2_noise.assign(self.eps * random_noise / tf.norm(random_noise))
+                if self.adv_noise:
+                    self.grad_delta = tf.gradients(ys=org_base_loss, xs=w2_noise)[0]
+                    self.grad_delta_dense = tf.stop_gradient(self.grad_delta)
+                    self.update_delta = w2_noise.assign(self.eps * self.grad_delta_dense / tf.norm(self.grad_delta_dense))
+            else:
+                # Gradients Computation of the Noise in Training
+                self.grad_delta = tf.gradients(ys=base_loss, xs=hidden_noise_tr)[0]
                 # convert the IndexedSlice Data to Dense Tensor
                 self.grad_delta_dense = tf.stop_gradient(self.grad_delta)
                 # self.grad_shape = tf.shape(self.grad_delta_dense)
                 # normalization: new_grad = (grad / |grad|) * eps
-                self.update_delta = tf.cond(self.add_concat_noise,
-                                            lambda: noise_vector_tr.assign(self.eps * self.grad_delta_dense / tf.norm(self.grad_delta_dense)),
-                                            lambda: weight_noise.assign(self.eps * self.grad_delta_dense / tf.norm(self.grad_delta_dense)))
+                self.update_delta = hidden_noise_tr.assign(self.eps * self.grad_delta_dense / tf.norm(self.grad_delta_dense))
+
             print('Model Building Completed.')
 ############################################### Functions to run the model #############################################
     def train_one_epoch(self, epoch):
@@ -234,12 +237,12 @@ class GAN_AE(object):
                 batch_ratings = self.train_array[batch_idx, :]
                 batch_neg_masks = self.negative_output_mask[batch_idx, :]
 
-            if self.random_noise or self.adv_noise:
+            if not self.robust_test:
             # Only calculate the loss of the observed items
                 grad, delta = self.session.run([self.grad_delta_dense, self.update_delta],
                                                 feed_dict={ self.ratings: batch_ratings, self.output_mask: batch_neg_masks,
                                                             self.istraining: True, self.isnegsample: self.is_neg_sa,
-                                                            self.add_concat_noise: self.concat_noise,
+                                                            self.add_hidden_noise: self.hidden_noise,
                                                             self.add_weight_noise: self.weight_noise,
                                                             self.layer1_dropout_rate: 0})
 
@@ -255,7 +258,7 @@ class GAN_AE(object):
                 self.session.run([self.opt, self.loss],
                                  feed_dict={self.ratings: batch_ratings, self.output_mask: batch_neg_masks,
                                             self.istraining: True, self.isnegsample: self.is_neg_sa,
-                                            self.add_concat_noise: self.concat_noise,
+                                            self.add_hidden_noise: self.hidden_noise,
                                             self.add_weight_noise: self.weight_noise,
                                             self.layer1_dropout_rate: 0.05})
 
@@ -274,31 +277,31 @@ class GAN_AE(object):
             print("Training Epoch {0}: [Loss] {1}".format(epoch, total_loss / n_batches))
 
     def eval_one_epoch(self, epoch):
-        # if self.random_noise or self.adv_noise:
-        #     delta = self.session.run(self.update_delta,
-        #                              feed_dict={self.ratings: self.train_array,
-        #                                         self.output_mask: self.negative_output_mask,
-        #                                         self.istraining: False, self.isnegsample: False,
-        #                                         self.add_concat_noise: self.concat_noise,
-        #                                         self.add_weight_noise: self.weight_noise,
-        #                                         self.layer1_dropout_rate: 0})
-        #
-        #     layer2_w, layer2_w_org = self.session.run([self.w2, self.w2_org],
-        #                                               feed_dict={self.ratings: self.train_array,
-        #                                                          self.output_mask: self.negative_output_mask,
-        #                                                          self.istraining: False, self.isnegsample: False,
-        #                                                          self.add_concat_noise: self.concat_noise,
-        #                                                          self.add_weight_noise: self.weight_noise,
-        #                                                          self.layer1_dropout_rate: 0})
-        #
-        #     print("Evaluation Epoch {0}: [Delta] = {1} [W2]={2} [W2_ORG]={3}"
-        #           .format(epoch, delta[10, 0], layer2_w[10, 0], layer2_w_org[10, 0]))
+        if self.robust_test:
+            delta = self.session.run(self.update_delta,
+                                     feed_dict={self.ratings: self.train_array,
+                                                self.output_mask: self.negative_output_mask,
+                                                self.istraining: False, self.isnegsample: False,
+                                                self.add_hidden_noise: self.hidden_noise,
+                                                self.add_weight_noise: self.weight_noise,
+                                                self.layer1_dropout_rate: 0})
+
+            layer2_w, layer2_w_org = self.session.run([self.w2, self.w2_org],
+                                                      feed_dict={self.ratings: self.train_array,
+                                                                 self.output_mask: self.negative_output_mask,
+                                                                 self.istraining: False, self.isnegsample: False,
+                                                                 self.add_hidden_noise: self.hidden_noise,
+                                                                 self.add_weight_noise: self.weight_noise,
+                                                                 self.layer1_dropout_rate: 0})
+
+            print("Evaluation Epoch {0}: [Delta] = {1} [W2]={2} [W2_ORG]={3}"
+                  .format(epoch, delta[10, 0], layer2_w[10, 0], layer2_w_org[10, 0]))
 
         # Input the uncorrupted training data
         pred_y = self.session.run(self.pred_y,
                                   feed_dict={self.ratings: self.train_array, self.output_mask: self.negative_output_mask,
                                              self.istraining: False, self.isnegsample: self.is_neg_sa,
-                                             self.add_concat_noise: self.concat_noise,
+                                             self.add_hidden_noise: self.hidden_noise,
                                              self.add_weight_noise: self.weight_noise,
                                              self.layer1_dropout_rate: 0})
         pred_y = pred_y.clip(min=0,max=1)
@@ -397,7 +400,7 @@ def parseArgs():
                         help='Number of epochs.')
     parser.add_argument('--batch_size', type=int, default=64,
                         help='Batch size.')
-    parser.add_argument('--lr', type=float, default=0.002,
+    parser.add_argument('--lr', type=float, default=0.05,
                         help='Learning rate.')
     return parser.parse_args()
 
@@ -438,22 +441,23 @@ if __name__ == "__main__":
                                           gpu_options=gpu_options)) as sess:
         model = GAN_AE(sess,
                         top_K=topK, neg_ratio=neg_ratio,
-                        num_factors=num_factors, ae_regs=ae_regs, eps=10,
-                        lr=lr, num_noise_factor = 64, loss_ratio = 0.8,
+                        num_factors=num_factors, ae_regs=ae_regs, eps=40,
+                        lr=lr, num_noise_factor = 64, loss_ratio = 1,
                         is_neg_sa= False,
-                        add_concat_noise=True, add_weight_noise=False,
+                        robust_test=False,
+                        add_hidden_noise=True, add_weight_noise=False,
                         add_random_noise=False, add_adv_noise=True,
                         epochs=num_epochs, batch_size=batch_size, T=50, verbose=True)
 
         model.prepare_data(original_matrix=original_matrix, train_matrix=train_matrix, test_matrix=test_matrix)
         model.build_model()
-        # model.evaluate('SavedModel/GAN_AE/Concat_Noise/Concat_Noise_EPS_1_AE_ML1M_CE_200_1.ckpt')
+        # model.evaluate('SavedModel/GAN_AE/Hidden_Noise/Hidden_Noise_EPS_10_ML1M_CE_MIX.ckpt')
 
         # model.evaluate('SavedModel/GAN_AE/Weight_Noise/Weight_Noise_AE_ML1M_CE_200_1.ckpt')
         # model.evaluate('SavedModel/GAN_AE/Pure_AE/Pure_AE_ML1M_CE_200_1.ckpt')
-        model.train(restore=True, save=True,
+        model.train(restore=True, save=False,
                     # restore_datafile='SavedModel/GAN_AE/Weight_Noise/Weight_Noise_AE_ML1M_CE_200_1.ckpt')
                     # restore_datafile='SavedModel/GAN_AE/Pure_AE/Pure_AE_ML1M_CE_200_1.ckpt',
-                    restore_datafile = 'SavedModel/GAN_AE/Pure_AE/Pure_AE_ML1M_CE_MIX_1.ckpt',
-                    # save_datafile= 'SavedModel/GAN_AE/Pure_AE/Pure_AE_ML1M_CE_MIX_1.ckpt')
-                    save_datafile = 'SavedModel/GAN_AE/Concat_Noise/Concat_Noise_EPS_10_ML1M_CE_MIX_1.ckpt')
+                    restore_datafile = 'SavedModel/GAN_AE/Hidden_Noise/Pure_AE_ML1M_CE_MIX.ckpt',
+                    # save_datafile= 'SavedModel/GAN_AE/Hidden_Noise/Pure_AE_ML1M_CE_MIX.ckpt')
+                    save_datafile = 'SavedModel/GAN_AE/Hidden_Noise/Hidden_Noise_EPS_10_ML1M_CE_MIX.ckpt')

@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import scipy.io as sio
 import scipy.sparse as sp
+import inspect
 
 ########################################### System Operations ##########################################################
 
@@ -84,6 +85,7 @@ def matrix_to_mat(datafile, opt='all', **kwargs):
         for name in kwargs:
             coo_mat = kwargs[name].tocoo()
             res_dict[name] = np.column_stack((coo_mat.row, coo_mat.col, coo_mat.data))
+            # print(name)
     sio.savemat(datafile,res_dict)
 
 # Save multiple matrices into one excel spreed sheet
@@ -159,6 +161,15 @@ def list_to_mat(datafile, **kwargs):
 # Set the numpy random seed
 def set_random_seed(seed = None):
     np.random.seed(seed=seed)
+
+# Print the parameters of current function frame
+def print_paras(frame):
+    args, _, _, values = inspect.getargvalues(frame)
+    print('=' * 55)
+    print('function name "%s"' % inspect.getframeinfo(frame)[2])
+    for i in args:
+        print("    %s = %s" % (i, values[i]))
+    print('=' * 55)
 
 ########################################################################################################################
 # if __name__=='__main__':

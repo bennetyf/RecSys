@@ -265,5 +265,5 @@ if __name__ == "__main__":
         # for train_matrix, test_matrix in mtl.matrix_cross_validation(original_matrix, n_splits=5, seed=0):
         model.prepare_data(original_matrix=original_matrix, train_matrix=train_matrix, test_matrix=test_matrix)
         model.build_model()
-        model.evaluate('SavedModel/AutoRec/I_AutoRec_ML1M_90_2.ckpt')
-        # model.train(restore=False, save=False, datafile='SavedModel/AutoRec/I_AutoRec_ML1M_90.ckpt')
+        # model.evaluate('SavedModel/AutoRec/I_AutoRec_ML1M_90_2.ckpt')
+        model.train(restore=False, save=False, datafile='SavedModel/AutoRec/I_AutoRec_ML1M_90.ckpt')

@@ -1,11 +1,13 @@
 import sys,os
 sys.path.append('/share/scratch/fengyuan/Projects/RecSys/')
 
-os.environ["CUDA_VISIBLE_DEVICES"]="0"
+os.environ["CUDA_VISIBLE_DEVICES"]="1"
 
 import tensorflow as tf
 import numpy as np
+import random
 import argparse
+import inspect
 
 import Utils.RecEval as evl
 import Utils.MatUtils as mtl
@@ -35,10 +37,14 @@ class BPRMF(object):
         self.skip_step = T
         self.verbose = verbose
 
+        gtl.print_paras(inspect.currentframe())
+
     def prepare_data(self,original_matrix, train_matrix, test_matrix):
         self.num_user, self.num_item = original_matrix.shape
         self.train_uid, self.train_iid, self.train_labels = mtl.matrix_to_list(train_matrix)
-        self.neg_dict, self.ranking_dict, self.test_dict = mtl.negdict_mat(original_matrix, test_matrix, num_neg=self.num_ranking_neg)
+        self.neg_dict, self.ranking_dict, self.test_dict = \
+            mtl.negdict_mat(original_matrix, test_matrix, mod='precision', random_state=20)
+        # self.neg_dict, self.ranking_dict, self.test_dict = mtl.negdict_mat(original_matrix, test_matrix, num_neg=self.num_ranking_neg)
         self.num_training = len(self.train_labels)
         self.num_batch = int(self.num_training / self.batch_size)
         print("Data Preparation Completed.")
@@ -72,9 +78,9 @@ class BPRMF(object):
 
             # Loss
             self.loss = - tf.reduce_sum(tf.log(tf.sigmoid(self.x_uij)))
-            self.loss += self.regs_user * tf.nn.l2_loss(user_latent_factor)+\
-                    self.regs_item * tf.nn.l2_loss(item_latent_factor)+\
-                    self.regs_item * tf.nn.l2_loss(neg_item_latent_factor)
+            self.loss +=    self.regs_user * tf.nn.l2_loss(user_lf_matrix)+\
+                            self.regs_item * tf.nn.l2_loss(item_lf_matrix)
+                            # self.regs_item * tf.nn.l2_loss(neg_item_latent_factor)
 
             # Opt
             self.opt = tf.train.AdamOptimizer(self.lr).minimize(self.loss)
@@ -85,14 +91,18 @@ class BPRMF(object):
 
     def train_one_epoch(self,epoch):
         uid, iid, lb = gtl.shuffle_list(self.train_uid, self.train_iid, self.train_labels)
+        neg_iid = [random.choice(self.neg_dict[u]) for u in uid]
+        # neg_iid = [np.random.choice(self.neg_dict[u], 1).item() for u in self.train_uid] #This is very slow
+        # neg_iid = [self.neg_dict[u][np.random.randint(len(self.neg_dict[u]))] for u in uid] #This is much faster
 
         n_batches, total_loss = 0,0
         for i in range(self.num_batch):
             batch_user = uid[i * self.batch_size:(i + 1) * self.batch_size]
             batch_item = iid[i * self.batch_size:(i + 1) * self.batch_size]
             batch_labels = lb[i * self.batch_size:(i + 1) * self.batch_size]
+            batch_neg_iid = neg_iid[i * self.batch_size:(i + 1) * self.batch_size]
             # Randomly select one negative item j for each user
-            batch_neg_iid = [np.random.choice(self.neg_dict[u],1).item() for u in batch_user]
+            # batch_neg_iid = [np.random.choice(self.neg_dict[u],1).item() for u in batch_user]
 
             _, l = self.session.run([self.opt, self.loss],
                                     feed_dict={ self.uid:batch_user,self.iid:batch_item,
@@ -108,23 +118,37 @@ class BPRMF(object):
             print("Epoch {0}: [Loss] {1}".format(epoch, total_loss / n_batches))
 
     def eval_one_epoch(self,epoch):
-        n_batches, total_hr, total_ndcg, total_mrr = 0, 0, 0, 0
+        n_batches, total_prec, total_recall, total_ap = 0, 0, 0, 0
+        # n_batches, total_hr, total_ndcg, total_mrr = 0, 0, 0, 0
         for u in self.ranking_dict:
+
+            if len(self.test_dict[u]) == 0:
+                continue
+
             iid = self.ranking_dict[u]
             uid = [u] * len(iid)
 
             rk = self.session.run(self.pred_y, feed_dict={self.uid: uid, self.iid: iid})
 
-            hr, ndcg, mrr = evl.rankingMetrics(rk, iid, self.topK, self.test_dict[u])
-
+            # hr, ndcg, mrr = evl.rankingMetrics(rk, iid, self.topK, self.test_dict[u], mod='hr')
+            prec, recall,_,_,_ = evl.rankingMetrics(rk, iid, [self.topK], self.test_dict[u], mod='precision',is_map=False)
             n_batches += 1
-            total_hr += hr
-            total_ndcg += ndcg
-            total_mrr += mrr
+            # total_hr += hr
+            # total_ndcg += ndcg
+            # total_mrr += mrr
+            total_prec += prec[0]
+            total_recall += recall[0]
 
-        avg_hr, avg_mrr, avg_ndcg = total_hr / n_batches, total_mrr / n_batches, total_ndcg / n_batches
-        print("Epoch {0}: [HR] {1} and [MRR] {2} and [nDCG@{3}] {4}".format(epoch, avg_hr, avg_mrr, self.topK, avg_ndcg))
-        return avg_hr, avg_mrr,avg_ndcg
+        # avg_hr, avg_mrr, avg_ndcg = total_hr / n_batches, total_mrr / n_batches, total_ndcg / n_batches
+        # print("Epoch {0}: [HR] {1} and [MRR] {2} and [nDCG@{3}] {4}".format(epoch, avg_hr, avg_mrr, self.topK, avg_ndcg))
+        # return avg_hr, avg_mrr,avg_ndcg
+        avg_prec, avg_recall, avg_ap = total_prec / n_batches, total_recall / n_batches, total_ap / n_batches
+        print("Epoch {0}: [Precision@{1}] {2}".format(epoch, self.topK, avg_prec))
+        print("Epoch {0}: [Recall@{1}] {2}".format(epoch, self.topK, avg_recall))
+        print("Epoch {0}: [MAP@{1}] {2}".format(epoch, self.topK, avg_ap))
+        print("=" * 40)
+
+        return avg_prec, avg_recall, avg_ap
 
     # Final Training of the model
     def train(self, restore=False, save=False, datafile=None):
@@ -173,9 +197,9 @@ class BPRMF(object):
 def parseArgs():
     parser = argparse.ArgumentParser(description="BPRMF")
 
-    parser.add_argument('--nfactors', type=int, default=16,
+    parser.add_argument('--nfactors', type=int, default=50,
                         help='Embedding size.')
-    parser.add_argument('--regs', nargs='?', default='[0.001,0.001]', type=str,
+    parser.add_argument('--regs', nargs='?', default='[0.0001,0.0001]', type=str,
                         help="Regularization constants for user and item embeddings.")
 
     parser.add_argument('--ntest', type=int, default=1,
@@ -186,11 +210,11 @@ def parseArgs():
                         help='The total number of negative items to be ranked when testing')
 
 
-    parser.add_argument('--epochs', type=int, default=500,
+    parser.add_argument('--epochs', type=int, default=2000,
                         help='Number of epochs.')
-    parser.add_argument('--batch_size', type=int, default=128,
+    parser.add_argument('--batch_size', type=int, default=1024,
                         help='Batch size.')
-    parser.add_argument('--lr', type=float, default=0.002,
+    parser.add_argument('--lr', type=float, default=0.01,
                         help='Learning rate.')
 
     return parser.parse_args()
@@ -209,14 +233,14 @@ if __name__ == "__main__":
     #     = mtl.load_as_matrix(datafile='Data/books_and_elecs_merged.csv')
 
     original_matrix \
-        = mtl.load_original_matrix(datafile='Data/ml-100k/u.data', header=['uid', 'iid', 'ratings', 'time'], sep='\t')
+        = mtl.load_original_matrix(datafile='Data/ml-1m/ratings.dat', header=['uid', 'iid', 'ratings', 'time'], sep='::')
 
-    original_matrix = mtl.matrix_theshold(original_matrix,threshold=2)
+    # original_matrix = mtl.matrix_theshold(original_matrix,threshold=2)
 
     original_matrix = mtl.matrix_to_binary(original_matrix,0)
 
-    train_matrix, test_matrix = mtl.matrix_split(original_matrix,n_item_per_user=num_test)
-
+    # train_matrix, test_matrix = mtl.matrix_split(original_matrix,n_item_per_user=num_test)
+    train_matrix, test_matrix = mtl.matrix_split(original_matrix, opt='prediction', mode='user', test_size=0.2, random_state=10)
 
     gpu_options = tf.GPUOptions(allow_growth=True)
     with tf.Session(config=tf.ConfigProto(allow_soft_placement=True,

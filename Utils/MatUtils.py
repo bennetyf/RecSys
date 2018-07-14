@@ -370,7 +370,7 @@ def matrix_to_vectors(matrix,opt='row'):
 
 # Generate a mask array (bool values) for the selected user-item pairs in the u-i matrix
 # This mask is essential for the output layer of the auto-encoder when negative sampling is enabled for output
-def neg_mask_array(original_matrix, train_matrix, neg_ratio, random_state = None):
+def neg_mask_array(original_matrix, train_matrix, num_neg=0, neg_ratio=0, mod='num', random_state=None):
 
     original_matrix, train_matrix = original_matrix.tolil(), train_matrix.tolil()
     num_users, num_items = original_matrix.shape
@@ -382,7 +382,8 @@ def neg_mask_array(original_matrix, train_matrix, neg_ratio, random_state = None
     negative_mask = []
     for uid, (org_iids, train_iids) in enumerate(zip(original_matrix.rows, train_matrix.rows)):
         neg_list_for_u = list(set(range(num_items)) - set(org_iids))  # This is faster than list comprehension
-        num_neg = int(len(train_iids) * neg_ratio)
+        if mod == 'ratio':
+            num_neg = int(len(train_iids) * neg_ratio)
 
         if len(neg_list_for_u) <= num_neg: # If the number of the negative items for u is less than the desired value
             chosen_idx = list(range(num_items)) # Select all the items

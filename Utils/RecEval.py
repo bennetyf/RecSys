@@ -70,17 +70,25 @@ def AP(ranklist, itemdict):
     return np.sum(np.asarray(precision) * np.asarray(rel)) / min(len(rankinglist), len(testinglist))
 
 def HR(ranklist, itemdict):
-    rankinglist = np.asarray(ranklist, dtype=np.int32).flatten()
-    testinglist = np.asarray(list(itemdict.keys()), dtype=np.int32).flatten()
+    # rankinglist = np.asarray(ranklist, dtype=np.int32).flatten()
+    # testinglist = np.asarray(list(itemdict.keys()), dtype=np.int32).flatten()
 
-    assert len(testinglist) == 1 # In calculating hit rate, the length of the item list must be 1
-
-    if testinglist[0] in rankinglist:
+    # assert len(testinglist) == 1 # In calculating hit rate, the length of the item list must be 1
+    item = list(itemdict.keys())[0]
+    if item in ranklist:
         return 1
     else:
         return 0
 
-def NDCG(ranklist, itemdict):
+def NDCG_One(ranklist, itemdict):
+    item = list(itemdict.keys())[0]
+    if item in ranklist:
+        idx = np.argwhere(ranklist == item).item()
+        return 1.0 / np.log2(idx+2)
+    else:
+        return 0.0
+
+def NDCG_Full(ranklist, itemdict):
     rankinglist = np.asarray(ranklist,dtype=np.int32).flatten()
     testinglist = np.asarray(list(itemdict.keys()),dtype=np.int32).flatten()
 
@@ -90,16 +98,23 @@ def NDCG(ranklist, itemdict):
             idx = np.argwhere(rankinglist == item).item()
             dcg_sum += itemdict[item] / np.log2(idx+2) # Get the DCG sum
 
-    idcg_sum, pos = 0.0, 0.0
+    idcg_sum = 0.0
     # Ideally, all items are ranked at the head of the resulting list
     ideal_ranking = sorted(itemdict.items(),key=lambda x: x[1], reverse=True)
-    for item, rating in ideal_ranking:
+    for pos, (item, rating) in enumerate(ideal_ranking):
         idcg_sum += rating / np.log2(pos+2)
-        pos += 1
 
     return dcg_sum / idcg_sum
 
-def MRR(ranklist, itemdict):
+def MRR_One(ranklist, itemdict):
+    item = list(itemdict.keys())[0]
+    if item in ranklist:
+        idx = np.argwhere(ranklist == item).item()
+        return 1.0 / (idx+1)
+    else:
+        return 0.0
+
+def MRR_Full(ranklist, itemdict):
     rankinglist = np.asarray(ranklist).flatten()
     testinglist = np.asarray(list(itemdict.keys()), dtype=np.int32).flatten()
 
@@ -112,7 +127,7 @@ def MRR(ranklist, itemdict):
     return sum_rr / len(testinglist)
 
 # Calculate all relevant ranking metrics
-def rankingMetrics(scores, itemlist, K, test_itemdict, mod = 'hr'):
+def rankingMetrics(scores, itemlist, K_list, test_itemdict, mod = 'hr', is_map=False, is_mrr=False, is_ndcg=False):
     assert len(scores) == len(itemlist)
     # Construct the score list
     scoredict = {}
@@ -120,14 +135,34 @@ def rankingMetrics(scores, itemlist, K, test_itemdict, mod = 'hr'):
         scoredict[itemlist[i]] = scores[i]
 
     # Get the top K scored items
-    ranklist = heapq.nlargest(K, scoredict, key=scoredict.get)
+    ranklist = heapq.nlargest(max(K_list), scoredict, key=scoredict.get)
 
     if mod == 'hr':
-        return HR(ranklist, test_itemdict), NDCG(ranklist, test_itemdict)
+        hr_list, ndcg_list = [], []
+        for k in K_list:
+            hr_list.append(HR(ranklist[:k], test_itemdict))
+            ndcg_list.append(NDCG_One(np.asarray(ranklist[:k]), test_itemdict))
+
+        return hr_list, ndcg_list
+
     if mod == 'precision':
-        precision, recall = Precision_and_Recall(ranklist, test_itemdict)
-        avg_precision = AP(ranklist, test_itemdict)
-        return precision, recall, avg_precision
+        prec_list, recall_list, ap_list, mrr_list, ndcg_list = [], [], [], [], []
+        for k in K_list:
+            p, r = Precision_and_Recall(ranklist[:k], test_itemdict)
+            prec_list.append(p)
+            recall_list.append(r)
+            if is_map:
+                ap = AP(ranklist[:k], test_itemdict)
+                ap_list.append(ap)
+            if is_mrr:
+                mrr = MRR_Full(ranklist[:k], test_itemdict)
+                mrr_list.append(mrr)
+            if is_ndcg:
+                ndcg = NDCG_Full(ranklist[:k], test_itemdict)
+                ndcg_list.append(ndcg)
+
+        return prec_list, recall_list, ap_list, mrr_list, ndcg_list
+
 
 ############# Top-K Ranking Metrics (Old)
 
