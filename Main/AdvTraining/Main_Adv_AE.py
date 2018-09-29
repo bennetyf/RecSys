@@ -1,7 +1,7 @@
 import sys,os
 sys.path.append('/share/scratch/fengyuan/Projects/RecSys/')
 
-os.environ["CUDA_VISIBLE_DEVICES"]="0"
+os.environ["CUDA_VISIBLE_DEVICES"]="1"
 
 import tensorflow as tf
 
@@ -12,7 +12,10 @@ import Utils.ModUtils as mod
 
 from DeepNN.Adv_AE import Adv_AE
 
-date ='20180713'
+date ='20180727'
+filename = 'checkpoint.ckpt'
+# resname = 'org_res.mat'
+# resname = 'adv_res_W1_10_W2_170.mat'
 
 path_dict = {'ml1m-full':   'Data/ml1m-hr-full.mat',
              'ml1m-345':    'Data/ml1m-hr-345.mat',
@@ -26,10 +29,14 @@ path_dict = {'ml1m-full':   'Data/ml1m-hr-full.mat',
              'douban-345':  'Data/douban-hr-345.mat',
              'douban-45':   'Data/douban-hr-45.mat',
              'douban-5':    'Data/douban-hr-5.mat',
-             'flimtrust-full':  'Data/filmtrust-hr-full.mat',
-             'flimtrust-345':   'Data/filmtrust-hr-345.mat',
-             'flimtrust-45':    'Data/filmtrust-hr-45.mat',
-             'flimtrust-5':     'Data/filmtrust-hr-5.mat',
+             'filmtrust-full':  'Data/filmtrust-hr-full.mat',
+             'filmtrust-34':   'Data/filmtrust-hr-34.mat',
+             'filmtrust-4':     'Data/filmtrust-hr-4.mat',
+             'flixster-full':   'Data/flixster-hr-full.mat',
+             'flixster-345':    'Data/flixster-hr-345.mat',
+             'flixster-45':     'Data/flixster-hr-45.mat',
+             'flixster-5':      'Data/flixster-hr-5.mat',
+             'flixster-old':    'Data/Flixster_Rank_HR.mat',
              'ymov-full':       'Data/ymov-hr-full.mat',
              'ymov-345':        'Data/ymov-hr-345.mat',
              'ymov-45':         'Data/ymov-hr-45.mat',
@@ -40,7 +47,7 @@ path_dict = {'ml1m-full':   'Data/ml1m-hr-full.mat',
              'ymus-5':          'Data/ymus-hr-5.mat',
 }
 
-dataset = 'ml1m-45'
+dataset = 'ciao-45'
 path = path_dict[dataset]
 
 print('Loading Data From {0}'.format(path))
@@ -58,69 +65,71 @@ with tf.Session(config=tf.ConfigProto(allow_soft_placement=True,
 
                     num_factors=200,
                     # ae_regs=[0.01,0.01,0.01,0.01],
-                    ae_regs = [0.001]*4,
-                    lr=0.02,
+                    ae_regs = [0.015]*4,
+                    lr=0.001,
 
                     is_user_node=True,
-                    user_node_reg=0.001,
+                    user_node_reg=0.015,
 
                     robust_test=False,
-                    adv_training=False,
-                    noise_pos='W2',
+                    adv_training=True,
+                    noise_pos='W1W2',
                     noise_type='adv',
                     num_noise_factor=64,
-                    eps=0.5,
+                    eps=1,
                     org_loss_ratio=1.0,
-                    noise_loss_ratio=200.0,
+                    noise_loss_ratio=100,
+                    noise_loss_ratio_W1=0,
+
+                    save_T= 10,
 
                     is_prec=False,
-                    epochs=2000, batch_size=128, T=200, verbose=True)
+                    epochs=500, batch_size=128, T=200, verbose=True)
+
+# lambda1=[0,0.1,0.4,0.7,1,4,7,10,15,20,25,30,35,40]
+# lambda2=[0,0.1,0.4,0.7,1,4,7,10,15,20,25,30,35,40]
+# for w1 in lambda1:
+#     for w2 in lambda2:
+#         model.noise_loss_ratio_W1 = w1
+#         model.noise_loss_ratio = w2
+#         resname = 'adv_res_W1_'+ str(w1) +'_W2_' + str(w2) +'.mat'
 
     model.prepare_data(original_matrix=original_matrix, train_matrix=train_matrix, test_matrix=test_matrix)
-
-    # for i in range(16):
-    #     model.eps = i
-    model.build_model()
-    #     model.evaluate('SavedModel/GAN_AE/ML-1M/CAE_ML1M_CE.ckpt')
-    #     model.evaluate('SavedModel/GAN_AE/Ciao/CAE_Ciao_CE.ckpt')
-    # model.evaluate('SavedModel/GAN_AE/YahooMovie/CAE_YahooMovie_CE.ckpt')
-     #     model.evaluate('SavedModel/GAN_AE/Douban/CAE_Douban_CE.ckpt')
-    # model.evaluate('SavedModel/GAN_AE/FilmTrust/CAE_FilmTrust_CE.ckpt')
-
-        # model.evaluate('SavedModel/GAN_AE/Douban/Weight_Noise/Pure_AE_Douban_SQ_MIX_ALL.ckpt')
-        # model.evaluate('SavedModel/GAN_AE/Epinions/Weight_Noise/Pure_AE_Epinions_SQ_MIX_ALL.ckpt')
-        # model.evaluate('SavedModel/GAN_AE/YahooMovie/Weight_Noise/Pure_AE_YahooMovie_SQ_MIX_ALL.ckpt')
-        # model.evaluate('SavedModel/GAN_AE/YahooMusic/Weight_Noise/Pure_AE_YahooMusic_SQ_MIX_ALL.ckpt')
-        # model.evaluate('SavedModel/GAN_AE/FilmTrust/Weight_Noise/Pure_AE_FilmTrust_SQ_MIX_ALL.ckpt')
-        # model.evaluate('SavedModel/GAN_AE/ML-10M/Weight_Noise/Pure_AE_ML10M_SQ_MIX_ALL_0_01.ckpt')
-        # model.evaluate('SavedModel/GAN_AE/BookCrossing/Weight_Noise/Pure_AE_BX_SQ_MIX_ALL_1_0.ckpt')
+    # resname='adv_res_eps2.mat'
 
     if model.adv_training:
-        # restore, save = True, True
-        ckpt_save_path = "Pretrain/%s/GANAE/embed_%d/%s/" % (dataset, model.num_factors, date) + 'checkpoint.ckpt'
-        ckpt_restore_path = "Pretrain/%s/CAE/embed_%d/%s/" % (dataset, model.num_factors, date) + 'checkpoint.ckpt'
+    # restore, save = True, True
+        ckpt_save_path = "Pretrain/%s/GANAE/embed_%d/reg_%s/%s/" % (dataset, model.num_factors, str(model.ae_regs[0]), date)
+        ckpt_restore_path = "Pretrain/%s/CAE/embed_%d/reg_%s/%s/" % (dataset, model.num_factors, str(model.ae_regs[0]), date)
+    # ckpt_restore_path = "Pretrain/%s/CAE/embed_%d/reg_%s/%s/" % (dataset, model.num_factors, str(0.02), date)
+        res_save_path = "Result/%s/GANAE/embed_%d/reg_%s/%s/" % (dataset, model.num_factors, str(model.ae_regs[0]), date)
     else:
-        # restore, save = False, True
-        ckpt_save_path = "Pretrain/%s/CAE/embed_%d/%s/" % (dataset, model.num_factors, date) + 'checkpoint.ckpt'
-        ckpt_restore_path = None
-        # ckpt_restore_path = 0 if args.restore is None else "Pretrain/%s/MF_BPR/embed_%d/%s/" % (args.dataset, args.embed_size, args.restore)
+    # restore, save = False, True
+        ckpt_save_path = "Pretrain/%s/CAE/embed_%d/reg_%s/%s/" % (dataset, model.num_factors, str(model.ae_regs[0]), date)
+        ckpt_restore_path = "Pretrain/%s/GANAE/embed_%d/reg_%s/%s/" % (dataset, model.num_factors, str(model.ae_regs[0]), date)
+        res_save_path = "Result/%s/CAE/embed_%d/reg_%s/%s/" % (dataset, model.num_factors, str(model.ae_regs[0]), date)
+    # ckpt_restore_path = 0 if args.restore is None else "Pretrain/%s/MF_BPR/embed_%d/%s/" % (args.dataset, args.embed_size, args.restore)
 
     if not os.path.exists(ckpt_save_path):
         os.makedirs(ckpt_save_path)
+
     if ckpt_restore_path and not os.path.exists(ckpt_restore_path):
         os.makedirs(ckpt_restore_path)
 
-    model.train(restore=False, save=True,
-                save_datafile=ckpt_save_path, restore_datafile=ckpt_restore_path)
-                # save_datafile = 'SavedModel/GAN_AE/ML-1M/CAE_ML1M_CE_Emb120_20180713.ckpt')
-                # save_datafile='SavedModel/GAN_AE/ML-1M/CAE_ML1M_PREC_CE.ckpt')
+    if not os.path.exists(res_save_path):
+        os.makedirs(res_save_path)
+    # print(res_save_path+resname)
+    # model.ae_regs=[0.001]*4
+    # model.user_node_regs=0.001
 
-                # save_datafile = 'SavedModel/GAN_AE/Ciao/CAE_Ciao_CE.ckpt')
-                # save_datafile = 'SavedModel/GAN_AE/Ciao/AE_Ciao_PREC_CE.ckpt')
+    # resname = 'robust_random_res.mat'
+    # for i in range(16):
+    #     model.eps = i
+    model.build_model()
+        # model.evaluate(ckpt_restore_path + 'adv_eps_15.ckpt')
+    # print(ckpt_restore_path)
+    model.train(restore=True, save=False,
+                save_datafile=ckpt_save_path + filename,
+                restore_datafile=ckpt_restore_path + filename)
 
-                # save_datafile = 'SavedModel/GAN_AE/GoodBooks/Weight_Noise/AE_GB_RANK_CE.ckpt')
-
-                # restore_datafile = 'SavedModel/GAN_AE/YahooMovie/AE_YahooMovie_CE.ckpt')
-                # restore_datafile = 'SavedModel/GAN_AE/Douban/AE_Douban_CE.ckpt')
-                # save_datafile = 'SavedModel/GAN_AE/FilmTrust/AE_FilmTrust_CE.ckpt')
-                # save_datafile = 'SavedModel/GAN_AE/YahooMusic/AE_YahooMusic_CE.ckpt')
+    # gtl.list_to_mat(res_save_path+resname, HR5=model.metric1, NDCG5=model.metric2)

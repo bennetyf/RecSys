@@ -1,7 +1,7 @@
 import sys,os
 sys.path.append('/share/scratch/fengyuan/Projects/RecSys/')
 
-os.environ["CUDA_VISIBLE_DEVICES"]="5"
+# os.environ["CUDA_VISIBLE_DEVICES"]="5"
 
 import tensorflow as tf
 import numpy as np
@@ -27,6 +27,7 @@ class AMF(object):
                  eps = 0.5,
                  lr=0.001,
                  is_prec=False,
+                 save_T = 50,
                  epochs=100,
                  batch_size=128,
                  T=10**3,
@@ -47,17 +48,21 @@ class AMF(object):
         self.lr = lr
         self.is_prec = is_prec
 
+        self.save_T = save_T
+
         self.epochs = epochs
         self.batch_size = batch_size
         self.skip_step = T
         self.verbose = verbose
+
+        self.metric1, self.metric2 = [], []
 
         gtl.print_paras(inspect.currentframe())
 
 
     def prepare_data(self, original_matrix, train_matrix, test_matrix):
         self.num_user, self.num_item = original_matrix.shape
-        self.train_uid, self.train_iid, self.train_label = mtl.matrix_to_list(train_matrix)
+        self.train_uid, self.train_iid, _ = mtl.matrix_to_list(train_matrix)
 
         if self.is_prec:
             self.neg_dict, self.ranking_dict, self.test_dict = \
@@ -66,7 +71,7 @@ class AMF(object):
             self.neg_dict, self.ranking_dict, self.test_dict = \
                 mtl.negdict_mat(original_matrix, test_matrix, num_neg=199, mod='others', random_state=0)
 
-        self.num_training = len(self.train_label)
+        self.num_training = len(self.train_uid)
         self.num_batch = int(self.num_training / self.batch_size)
         print("Data Preparation Completed.")
 
@@ -76,7 +81,6 @@ class AMF(object):
                 self.uid = tf.placeholder(dtype=tf.int32, shape=[None], name='user_id')
                 self.pos_iid = tf.placeholder(dtype=tf.int32, shape=[None], name='pos_item_id')
                 self.neg_iid = tf.placeholder(dtype=tf.int32, shape=[None], name='neg_item_id')
-                self.labels = tf.placeholder(dtype=tf.float32, shape=[None], name='labels')
 
             with tf.name_scope('Embedding'):
                 self.embedding_P = tf.get_variable(name='embedding_P',
@@ -155,7 +159,7 @@ class AMF(object):
             print('Model Building Completed.')
 
     def train_one_epoch(self, epoch):
-        uid, iid, label = gtl.shuffle_list(self.train_uid, self.train_iid, self.train_label)
+        uid, iid = gtl.shuffle_list(self.train_uid, self.train_iid)
 
         # start_time = time.time()
         iid_neg = [random.choice(self.neg_dict[u]) for u in uid]
@@ -169,12 +173,10 @@ class AMF(object):
                 # break
                 batch_uids = uid[i * self.batch_size:]
                 batch_iids_pos = iid[i * self.batch_size:]
-                batch_labels = label[i * self.batch_size:]
                 batch_iids_neg = iid_neg[i * self.batch_size:]
             else:
                 batch_uids = uid[i * self.batch_size: (i + 1) * self.batch_size]
                 batch_iids_pos = iid[i * self.batch_size: (i + 1) * self.batch_size]
-                batch_labels = label[i * self.batch_size:(i + 1) * self.batch_size]
                 batch_iids_neg = iid_neg[i * self.batch_size:(i + 1) * self.batch_size]
                 # Randomly select one negative item j for each user
                 # batch_iids_neg = [np.random.choice(self.neg_dict[u], 1).item() for u in batch_uids]
@@ -183,7 +185,6 @@ class AMF(object):
                             self.uid:       batch_uids,
                             self.pos_iid:   batch_iids_pos,
                             self.neg_iid:   batch_iids_neg,
-                            self.labels:    batch_labels
                         }
 
             if self.is_adv:
@@ -206,6 +207,10 @@ class AMF(object):
             total_prec, total_recall = np.zeros(len(self.topK)), np.zeros(len(self.topK))
         else:
             total_hr, total_ndcg = np.zeros(len(self.topK)), np.zeros(len(self.topK))
+
+        # if self.robust_test:
+        #     print('[Eps={0}] {1} Noise Level [Robust Test]'.format(self.eps, self.noise_type))
+        #     self.session.run([self.update_P, self.update_Q], feed_dict={self.uid: uid, self.pos_iid: iid})
 
         for u in self.ranking_dict:
 
@@ -257,23 +262,36 @@ class AMF(object):
             self.session.run(tf.global_variables_initializer())
 
         if not save: # Do not save the model
-            self.eval_one_epoch(-1)
+            previous_metric1, previous_metric2 = self.eval_one_epoch(-1)
+            self.metric1.append(previous_metric1)
+            self.metric2.append(previous_metric2)
             for i in range(self.epochs):
                 self.train_one_epoch(i)
-                self.eval_one_epoch(i)
+                metric1, metric2 = self.eval_one_epoch(i)
+                self.metric1.append(metric1)
+                self.metric2.append(metric2)
 
         else: # Save the model while training
-            previous_metric1,_ = self.eval_one_epoch(-1)
+            previous_metric1,previous_metric2 = self.eval_one_epoch(-1)
+            self.metric1.append(previous_metric1)
+            self.metric2.append(previous_metric2)
             # previous_metric1 = 0
             for i in range(self.epochs):
                 self.train_one_epoch(i)
-                metric1,_ = self.eval_one_epoch(i)
-                if metric1 > previous_metric1:
-                    previous_metric1 = metric1
-                    self.save_model(save_datafile, verbose=False)
+                metric1,metric2 = self.eval_one_epoch(i)
+                self.metric1.append(metric1)
+                self.metric2.append(metric2)
+                # if i % self.save_T == 0:
+                #     self.save_model(save_datafile, verbose=True)
+                # if metric1 > previous_metric1:
+                #     previous_metric1 = metric1
+                if i == 100:
+                    self.save_model(save_datafile, verbose=True)
 
     # Save the model
     def save_model(self, datafile, verbose=False):
+        # saver = tf.train.Saver({'embedding_P':self.embedding_P,
+        #                         'embedding_Q':self.embedding_Q})
         saver = tf.train.Saver()
         path = saver.save(self.session, datafile)
         if verbose:

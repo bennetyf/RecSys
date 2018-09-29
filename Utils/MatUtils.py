@@ -103,6 +103,7 @@ def matrix_split(matrix, opt='ranking', mode='df', n_item_per_user=1, test_size=
 
         test_matrix = csr_matrix((test_data, (test_row, test_col)), shape=matrix.shape)
         train_matrix = csr_matrix((train_data, (train_row, train_col)), shape=matrix.shape)
+
         return train_matrix.tolil(), test_matrix.tolil()
 
     # Prediction (Randomly splitting the dataset)

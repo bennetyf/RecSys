@@ -1,7 +1,7 @@
 import sys,os
 sys.path.append('/share/scratch/fengyuan/Projects/RecSys/')
 
-os.environ["CUDA_VISIBLE_DEVICES"]="0"
+# os.environ["CUDA_VISIBLE_DEVICES"]="0"
 
 import tensorflow as tf
 import numpy as np
@@ -35,10 +35,12 @@ class Adv_AE(object):
                  adv_training = False,
 
                  noise_loss_ratio = 0.0,
+                 noise_loss_ratio_W1 = 0.0,
                  org_loss_ratio=0.0,
 
                  is_prec = False,
 
+                 save_T = 10,
                  epochs=100, batch_size=128, T=10**3, verbose=False):
 
         # Parse the arguments and store them in the model
@@ -62,9 +64,12 @@ class Adv_AE(object):
 
         self.org_loss_ratio = org_loss_ratio
         self.noise_loss_ratio = noise_loss_ratio
+        self.noise_loss_ratio_W1 = noise_loss_ratio_W1
 
         self.robust_test = robust_test
         self.adv_training = adv_training
+
+        self.save_T = save_T
 
         self.epochs = epochs
         self.batch_size = batch_size
@@ -72,6 +77,9 @@ class Adv_AE(object):
         self.verbose = verbose
 
         self.is_prec = is_prec
+
+        # Training Records
+        self.metric1, self.metric2=[],[]
 
         if self.noise_pos == 'USER':
             assert self.is_user_node
@@ -109,21 +117,21 @@ class Adv_AE(object):
                 input = self.ratings
 
                 # Encoder Variables
-                layer1_w = tf.get_variable(name='encoder_weights',
+                self.layer1_w = tf.get_variable(name='encoder_weights',
                                            shape=[self.num_item, self.num_factors],
                                            initializer=tf.truncated_normal_initializer(mean=0.0, stddev=0.01))
 
-                layer1_b = tf.get_variable(name='encoder_bias',
+                self.layer1_b = tf.get_variable(name='encoder_bias',
                                            shape=[self.num_factors],
                                            initializer=tf.zeros_initializer())
                 if self.is_user_node:
-                    user_embedding = tf.get_variable(name='user_embedding',
+                    self.user_embedding = tf.get_variable(name='user_embedding',
                                                      shape=[self.num_user, self.num_factors],
                                                      initializer=tf.truncated_normal_initializer(mean=0.0, stddev=0.01),
                                                      dtype=tf.float32)  # (users, embedding_size)
 
                 # Decoder Variables
-                layer2_w1 = tf.get_variable(name='decoder_weights',
+                self.layer2_w1 = tf.get_variable(name='decoder_weights',
                                             shape=[self.num_factors, self.num_item],
                                             initializer=tf.truncated_normal_initializer(mean=0.0, stddev=0.01))
 
@@ -131,7 +139,7 @@ class Adv_AE(object):
                                             shape=[self.num_noise_factor, self.num_item],
                                             initializer=tf.truncated_normal_initializer(mean=0.0, stddev=0.01))
 
-                layer2_b = tf.get_variable(name='decoder_bias',
+                self.layer2_b = tf.get_variable(name='decoder_bias',
                                            shape=[self.num_item],
                                            initializer=tf.zeros_initializer())
 
@@ -181,7 +189,7 @@ class Adv_AE(object):
             #########################################################################################################
             with tf.name_scope('Original_AE'):
                 ############# Original AE Model
-                org_w1, org_w2 = layer1_w, layer2_w1
+                org_w1, org_w2 = self.layer1_w, self.layer2_w1
 
                 if self.robust_test:
                     if self.noise_pos == 'W1':
@@ -189,13 +197,15 @@ class Adv_AE(object):
                     elif self.noise_pos == 'W2':
                         org_w2 += item_w2_noise
                     elif self.noise_pos == 'USER':
-                        user_embedding += user_w_noise
+                        self.user_embedding += user_w_noise
 
                 if self.is_user_node:
-                    user_node = tf.nn.embedding_lookup(user_embedding, self.uid)
-                    org_encoder = tf.sigmoid(tf.matmul(input, org_w1) + layer1_b + user_node)
+                    user_node = tf.nn.embedding_lookup(self.user_embedding, self.uid)
+                    org_encoder = tf.sigmoid(tf.matmul(input, org_w1) + self.layer1_b + user_node)
+                    # org_encoder = tf.identity(tf.matmul(input, org_w1) + self.layer1_b + user_node)
                 else:
-                    org_encoder = tf.sigmoid(tf.matmul(input, org_w1) + layer1_b)
+                    org_encoder = tf.sigmoid(tf.matmul(input, org_w1) + self.layer1_b)
+                    # org_encoder = tf.identity(tf.matmul(input, org_w1) + self.layer1_b)
 
                 if self.robust_test and self.noise_pos == 'HID':
                     org_encoder += hidden_noise_eval
@@ -204,12 +214,12 @@ class Adv_AE(object):
                                       lambda: tf.layers.dropout(org_encoder, rate=self.layer1_dropout_rate, name='layer1_dropout'),
                                       lambda: org_encoder)
 
-                org_decoder = tf.identity(tf.matmul(org_encoder, org_w2) + layer2_b)
+                org_decoder = tf.identity(tf.matmul(org_encoder, org_w2) + self.layer2_b)
 
                 self.org_output = org_decoder
 
                 org_base_loss = tf.reduce_sum(tf.nn.sigmoid_cross_entropy_with_logits(labels=input, logits=self.org_output))
-                # org_base_loss = tf.nn.l2_loss(tf.sigmoid(self.org_output) - input)
+                # org_base_loss = tf.nn.l2_loss(self.org_output - input)
                 org_base_loss = org_base_loss / tf.cast(tf.shape(input)[0], dtype=org_base_loss.dtype)
 
             #########################################################################################################
@@ -220,10 +230,10 @@ class Adv_AE(object):
                     with tf.name_scope("ConCat_AE"):
 
                         if self.is_user_node:
-                            user_node = tf.nn.embedding_lookup(user_embedding, self.uid)
-                            concat_noise_encoder = tf.sigmoid(tf.matmul(input, layer1_w) + layer1_b + user_node)
+                            user_node = tf.nn.embedding_lookup(self.user_embedding, self.uid)
+                            concat_noise_encoder = tf.sigmoid(tf.matmul(input, self.layer1_w) + self.layer1_b + user_node)
                         else:
-                            concat_noise_encoder = tf.sigmoid(tf.matmul(input, layer1_w) + layer1_b)
+                            concat_noise_encoder = tf.sigmoid(tf.matmul(input, self.layer1_w) + self.layer1_b)
 
                         concat_noise_encoder = tf.cond(self.istraining,
                                                        lambda:tf.concat([concat_noise_encoder, noise_vector_tr], axis=1),
@@ -233,9 +243,9 @@ class Adv_AE(object):
                                                         lambda: tf.layers.dropout(concat_noise_encoder, rate=self.layer1_dropout_rate, name='layer1_dropout'),
                                                         lambda: concat_noise_encoder)
 
-                        concat_w2 = tf.concat([layer2_w1, layer2_w2], axis=0)
+                        concat_w2 = tf.concat([self.layer2_w1, layer2_w2], axis=0)
                         # out_vector = tf.sigmoid(tf.matmul(concat_noise_encoder, layer2_concat_w) + layer2_b)
-                        concat_noise_decoder = tf.identity(tf.matmul(concat_noise_encoder, concat_w2) + layer2_b)
+                        concat_noise_decoder = tf.identity(tf.matmul(concat_noise_encoder, concat_w2) + self.layer2_b)
 
                         # Output
                         self.concat_noise_output = concat_noise_decoder
@@ -244,65 +254,69 @@ class Adv_AE(object):
                         # concat_noise_base_loss = tf.nn.l2_loss(tf.sigmoid(self.concat_noise_output) - input)
                         concat_noise_base_loss = concat_noise_base_loss / tf.cast(tf.shape(input)[0], dtype=concat_noise_base_loss.dtype)
 
-                if self.noise_pos == 'W1':
+                if self.noise_pos == 'W1' or self.noise_pos == 'W1W2':
                     with tf.name_scope("W1_AE"):
-                        w1_noise_w1 = layer1_w + item_w1_noise
+                        w1_noise_w1 = self.layer1_w + item_w1_noise
 
                         if self.is_user_node:
-                            user_node = tf.nn.embedding_lookup(user_embedding, self.uid)
-                            w1_noise_encoder = tf.sigmoid(tf.matmul(input, w1_noise_w1) + layer1_b + user_node)
+                            user_node = tf.nn.embedding_lookup(self.user_embedding, self.uid)
+                            w1_noise_encoder = tf.sigmoid(tf.matmul(input, w1_noise_w1) + self.layer1_b + user_node)
+                            # w1_noise_encoder = tf.identity(tf.matmul(input, w1_noise_w1) + self.layer1_b + user_node)
                         else:
-                            w1_noise_encoder = tf.sigmoid(tf.matmul(input, w1_noise_w1) + layer1_b)
+                            w1_noise_encoder = tf.sigmoid(tf.matmul(input, w1_noise_w1) + self.layer1_b)
+                            # w1_noise_encoder = tf.identity(tf.matmul(input, w1_noise_w1) + self.layer1_b)
 
                         w1_noise_encoder = tf.cond(self.istraining,
                                                    lambda: tf.layers.dropout(w1_noise_encoder, rate=self.layer1_dropout_rate,name='layer1_dropout'),
                                                    lambda: w1_noise_encoder)
 
-                        w1_noise_decoder = tf.identity(tf.matmul(w1_noise_encoder, layer2_w1) + layer2_b)
+                        w1_noise_decoder = tf.identity(tf.matmul(w1_noise_encoder, self.layer2_w1) + self.layer2_b)
 
                         # Output
                         self.w1_noise_output = w1_noise_decoder
 
                         # Noisy Model Loss
                         w1_noise_base_loss = tf.reduce_sum(tf.nn.sigmoid_cross_entropy_with_logits(labels=input, logits=self.w1_noise_output))
-                        # weight_noise_base_loss = tf.nn.l2_loss(tf.sigmoid(self.weight_noise_output) - input)
+                        # w1_noise_base_loss = tf.nn.l2_loss(self.w1_noise_output - input)
                         w1_noise_base_loss = w1_noise_base_loss / tf.cast(tf.shape(input)[0], dtype=w1_noise_base_loss.dtype)
 
-                if self.noise_pos == 'W2':
+                if self.noise_pos == 'W2' or self.noise_pos == 'W1W2':
                     with tf.name_scope("W2_AE"):
-                        w2_noise_w2 = layer2_w1 + item_w2_noise
+                        w2_noise_w2 = self.layer2_w1 + item_w2_noise
 
                         if self.is_user_node:
-                            user_node = tf.nn.embedding_lookup(user_embedding, self.uid)
-                            w2_noise_encoder = tf.sigmoid(tf.matmul(input, layer1_w) + layer1_b + user_node)
+                            user_node = tf.nn.embedding_lookup(self.user_embedding, self.uid)
+                            w2_noise_encoder = tf.sigmoid(tf.matmul(input, self.layer1_w) + self.layer1_b + user_node)
+                            # w2_noise_encoder = tf.identity(tf.matmul(input, self.layer1_w) + self.layer1_b + user_node)
                         else:
-                            w2_noise_encoder = tf.sigmoid(tf.matmul(input, layer1_w) + layer1_b)
+                            w2_noise_encoder = tf.sigmoid(tf.matmul(input, self.layer1_w) + self.layer1_b)
+                            # w2_noise_encoder = tf.identity(tf.matmul(input, self.layer1_w) + self.layer1_b)
 
                         w2_noise_encoder = tf.cond(self.istraining,
                                                    lambda: tf.layers.dropout(w2_noise_encoder, rate=self.layer1_dropout_rate,name='layer1_dropout'),
                                                    lambda: w2_noise_encoder)
 
-                        w2_noise_decoder = tf.identity(tf.matmul(w2_noise_encoder, w2_noise_w2) + layer2_b)
+                        w2_noise_decoder = tf.identity(tf.matmul(w2_noise_encoder, w2_noise_w2) + self.layer2_b)
 
                         # Output
                         self.w2_noise_output = w2_noise_decoder
 
                         # Noisy Model Loss
                         w2_noise_base_loss = tf.reduce_sum(tf.nn.sigmoid_cross_entropy_with_logits(labels=input, logits=self.w2_noise_output))
-                        # weight_noise_base_loss = tf.nn.l2_loss(tf.sigmoid(self.weight_noise_output) - input)
+                        # w2_noise_base_loss = tf.nn.l2_loss(self.w2_noise_output - input)
                         w2_noise_base_loss = w2_noise_base_loss / tf.cast(tf.shape(input)[0], dtype=w2_noise_base_loss.dtype)
 
                 if self.noise_pos == 'USER':
                     with tf.name_scope("USER_AE"):
-                        user_embedding += user_w_noise
-                        user_node = tf.nn.embedding_lookup(user_embedding, self.uid)
-                        user_noise_encoder = tf.sigmoid(tf.matmul(input, layer1_w) + layer1_b + user_node)
+                        self.user_embedding += user_w_noise
+                        user_node = tf.nn.embedding_lookup(self.user_embedding, self.uid)
+                        user_noise_encoder = tf.sigmoid(tf.matmul(input, self.layer1_w) + self.layer1_b + user_node)
 
                         user_noise_encoder = tf.cond(self.istraining,
                                                    lambda: tf.layers.dropout(user_noise_encoder, rate=self.layer1_dropout_rate,name='layer1_dropout'),
                                                    lambda: user_noise_encoder)
 
-                        user_noise_decoder = tf.identity(tf.matmul(user_noise_encoder, layer2_w1) + layer2_b)
+                        user_noise_decoder = tf.identity(tf.matmul(user_noise_encoder, self.layer2_w1) + self.layer2_b)
 
                         # Output
                         self.user_noise_output = user_noise_decoder
@@ -315,16 +329,16 @@ class Adv_AE(object):
                 if self.noise_pos == 'HID':
                     with tf.name_scope("Hidden_AE"):
                         if self.is_user_node:
-                            user_node = tf.nn.embedding_lookup(user_embedding, self.uid)
-                            hidden_noise_encoder = tf.sigmoid(tf.matmul(input, layer1_w) + layer1_b + user_node) + hidden_noise_tr
+                            user_node = tf.nn.embedding_lookup(self.user_embedding, self.uid)
+                            hidden_noise_encoder = tf.sigmoid(tf.matmul(input, self.layer1_w) + self.layer1_b + user_node) + hidden_noise_tr
                         else:
-                            hidden_noise_encoder = tf.sigmoid(tf.matmul(input, layer1_w) + layer1_b) + hidden_noise_tr
+                            hidden_noise_encoder = tf.sigmoid(tf.matmul(input, self.layer1_w) + self.layer1_b) + hidden_noise_tr
 
                         hidden_noise_encoder = tf.cond(self.istraining,
                                                         lambda: tf.layers.dropout(hidden_noise_encoder, rate=self.layer1_dropout_rate, name='layer1_dropout'),
                                                         lambda: hidden_noise_encoder)
 
-                        hidden_noise_decoder = tf.identity(tf.matmul(hidden_noise_encoder, layer2_w1) + layer2_b)
+                        hidden_noise_decoder = tf.identity(tf.matmul(hidden_noise_encoder, self.layer2_w1) + self.layer2_b)
 
                         # Output
                         self.hidden_noise_output = hidden_noise_decoder
@@ -337,62 +351,83 @@ class Adv_AE(object):
             with tf.name_scope('Prediction'):
                 # self.mixed_output = (1-self.output_mix_ratio) * self.org_output + self.output_mix_ratio * self.noisy_output
                 self.pred_y = tf.sigmoid(self.org_output)
+                # self.pred_y = self.org_output
                 # self.pred_y = tf.sigmoid(self.mixed_output)
 
             ############# Overall Losses
             with tf.name_scope('Loss'):
                 if self.adv_training:
                     if self.noise_pos == 'W1':
-                        base_loss = self.org_loss_ratio * org_base_loss + self.noise_loss_ratio * w1_noise_base_loss
+                        base_loss = self.org_loss_ratio * org_base_loss + self.noise_loss_ratio_W1 * w1_noise_base_loss
                         reg_loss =  self.ae_regs[0] * tf.nn.l2_loss(w1_noise_w1) + \
-                                    self.ae_regs[1] * tf.nn.l2_loss(layer1_b) + \
-                                    self.ae_regs[2] * tf.nn.l2_loss(layer2_w1) + \
-                                    self.ae_regs[3] * tf.nn.l2_loss(layer2_b)
+                                    self.ae_regs[1] * tf.nn.l2_loss(self.layer1_b) + \
+                                    self.ae_regs[2] * tf.nn.l2_loss(self.layer2_w1) + \
+                                    self.ae_regs[3] * tf.nn.l2_loss(self.layer2_b)
 
                     if self.noise_pos == 'W2':
                         base_loss = self.org_loss_ratio * org_base_loss + self.noise_loss_ratio * w2_noise_base_loss
-                        reg_loss =  self.ae_regs[0] * tf.nn.l2_loss(layer1_w) + \
-                                    self.ae_regs[1] * tf.nn.l2_loss(layer1_b) + \
+                        reg_loss =  self.ae_regs[0] * tf.nn.l2_loss(self.layer1_w) + \
+                                    self.ae_regs[1] * tf.nn.l2_loss(self.layer1_b) + \
                                     self.ae_regs[2] * tf.nn.l2_loss(w2_noise_w2) + \
-                                    self.ae_regs[3] * tf.nn.l2_loss(layer2_b)
+                                    self.ae_regs[3] * tf.nn.l2_loss(self.layer2_b)
 
                     if self.noise_pos == 'HID':
                         base_loss = self.org_loss_ratio * org_base_loss + self.noise_loss_ratio * hidden_noise_base_loss
-                        reg_loss =  self.ae_regs[0] * tf.nn.l2_loss(layer1_w) + \
-                                    self.ae_regs[1] * tf.nn.l2_loss(layer1_b) + \
-                                    self.ae_regs[2] * tf.nn.l2_loss(layer2_w1) + \
-                                    self.ae_regs[3] * tf.nn.l2_loss(layer2_b)
+                        reg_loss =  self.ae_regs[0] * tf.nn.l2_loss(self.layer1_w) + \
+                                    self.ae_regs[1] * tf.nn.l2_loss(self.layer1_b) + \
+                                    self.ae_regs[2] * tf.nn.l2_loss(self.layer2_w1) + \
+                                    self.ae_regs[3] * tf.nn.l2_loss(self.layer2_b)
 
                     if self.noise_pos == 'USER':
                         base_loss = self.org_loss_ratio * org_base_loss + self.noise_loss_ratio * user_noise_base_loss
-                        reg_loss =  self.ae_regs[0] * tf.nn.l2_loss(layer1_w) + \
-                                    self.ae_regs[1] * tf.nn.l2_loss(layer1_b) + \
-                                    self.ae_regs[2] * tf.nn.l2_loss(layer2_w1) + \
-                                    self.ae_regs[3] * tf.nn.l2_loss(layer2_b)
+                        reg_loss =  self.ae_regs[0] * tf.nn.l2_loss(self.layer1_w) + \
+                                    self.ae_regs[1] * tf.nn.l2_loss(self.layer1_b) + \
+                                    self.ae_regs[2] * tf.nn.l2_loss(self.layer2_w1) + \
+                                    self.ae_regs[3] * tf.nn.l2_loss(self.layer2_b)
 
                     if self.noise_pos == 'CON':
                         base_loss = self.org_loss_ratio * org_base_loss + self.noise_loss_ratio * concat_noise_base_loss
-                        reg_loss =  self.ae_regs[0] * tf.nn.l2_loss(layer1_w) + \
-                                    self.ae_regs[1] * tf.nn.l2_loss(layer1_b) + \
+                        reg_loss =  self.ae_regs[0] * tf.nn.l2_loss(self.layer1_w) + \
+                                    self.ae_regs[1] * tf.nn.l2_loss(self.layer1_b) + \
                                     self.ae_regs[2] * tf.nn.l2_loss(concat_w2) + \
-                                    self.ae_regs[3] * tf.nn.l2_loss(layer2_b)
+                                    self.ae_regs[3] * tf.nn.l2_loss(self.layer2_b)
+
+                    if self.noise_pos == 'W1W2':
+                        base_loss = self.org_loss_ratio * org_base_loss + self.noise_loss_ratio_W1 * w1_noise_base_loss + self.noise_loss_ratio * w2_noise_base_loss
+                        if self.noise_loss_ratio_W1 != 0 and self.noise_loss_ratio != 0:
+                            reg_loss = self.ae_regs[0] * tf.nn.l2_loss(w1_noise_w1) + \
+                                       self.ae_regs[1] * tf.nn.l2_loss(self.layer1_b) + \
+                                       self.ae_regs[2] * tf.nn.l2_loss(w2_noise_w2) + \
+                                       self.ae_regs[3] * tf.nn.l2_loss(self.layer2_b)
+
+                        elif self.noise_loss_ratio_W1 == 0: #Noise on W2 only
+                            reg_loss =  self.ae_regs[0] * tf.nn.l2_loss(self.layer1_w) + \
+                                        self.ae_regs[1] * tf.nn.l2_loss(self.layer1_b) + \
+                                        self.ae_regs[2] * tf.nn.l2_loss(w2_noise_w2) + \
+                                        self.ae_regs[3] * tf.nn.l2_loss(self.layer2_b)
+
+                        elif self.noise_loss_ratio == 0: #Noise on W1 only
+                            reg_loss = self.ae_regs[0] * tf.nn.l2_loss(w1_noise_w1) + \
+                                        self.ae_regs[1] * tf.nn.l2_loss(self.layer1_b) + \
+                                        self.ae_regs[2] * tf.nn.l2_loss(self.layer2_w1) + \
+                                        self.ae_regs[3] * tf.nn.l2_loss(self.layer2_b)
 
                 else:
                     base_loss = org_base_loss
-                    reg_loss = self.ae_regs[0] * tf.nn.l2_loss(layer1_w) + \
-                               self.ae_regs[1] * tf.nn.l2_loss(layer1_b) + \
-                               self.ae_regs[2] * tf.nn.l2_loss(layer2_w1) + \
-                               self.ae_regs[3] * tf.nn.l2_loss(layer2_b)
+                    reg_loss = self.ae_regs[0] * tf.nn.l2_loss(self.layer1_w) + \
+                               self.ae_regs[1] * tf.nn.l2_loss(self.layer1_b) + \
+                               self.ae_regs[2] * tf.nn.l2_loss(self.layer2_w1) + \
+                               self.ae_regs[3] * tf.nn.l2_loss(self.layer2_b)
 
                 if self.is_user_node:
-                    reg_loss += self.user_node_regs * tf.nn.l2_loss(user_embedding)
+                    reg_loss += self.user_node_regs * tf.nn.l2_loss(self.user_embedding)
 
                 self.loss = base_loss + reg_loss
 
             ############# Optimizer
             with tf.name_scope('Optimizer'):
-                self.opt = tf.train.AdagradOptimizer(self.lr).minimize(self.loss)
-
+                self.opt = tf.train.GradientDescentOptimizer(self.lr).minimize(self.loss)
+                # self.opt = tf.train.AdagradOptimizer(self.lr).minimize(self.loss)
             ########### Robustness Testing (Random or Adversial)
             with tf.name_scope('Noise_Adding'):
                 if self.adv_training or self.robust_test:
@@ -404,7 +439,7 @@ class Adv_AE(object):
                             random_noise = tf.random_normal(shape=tf.shape(org_w2), mean=tf.reduce_mean(org_w2), stddev=0.01)
                             self.update_delta = item_w2_noise.assign(self.eps * random_noise / tf.norm(random_noise))
                         if self.noise_pos == 'USER':
-                            random_noise = tf.random_normal(shape=tf.shape(user_embedding), mean=tf.reduce_mean(user_embedding), stddev=0.01)
+                            random_noise = tf.random_normal(shape=tf.shape(self.user_embedding), mean=tf.reduce_mean(self.user_embedding), stddev=0.01)
                             self.update_delta = user_w_noise.assign(self.eps * random_noise / tf.norm(random_noise))
                         if self.noise_pos == 'HID':
                             random_noise = tf.random_normal(shape=tf.shape(org_encoder), mean=tf.reduce_mean(org_encoder), stddev=0.01)
@@ -443,6 +478,42 @@ class Adv_AE(object):
                                 self.grad_delta = tf.gradients(ys=base_loss, xs=hidden_noise_tr)[0]
                                 self.grad_delta_dense = tf.stop_gradient(self.grad_delta)
                                 self.update_delta = hidden_noise_tr.assign(self.eps * self.grad_delta_dense / tf.norm(self.grad_delta_dense))
+                        if self.noise_pos == 'W1W2':
+                            if self.robust_test:
+                                if self.noise_loss_ratio != 0 and self.noise_loss_ratio_W1 != 0:
+                                    self.grad_delta1 = tf.gradients(ys=org_base_loss, xs=item_w1_noise)[0]
+                                    self.grad_delta2 = tf.gradients(ys=org_base_loss, xs=item_w2_noise)[0]
+                                elif self.noise_loss_ratio_W1 == 0:
+                                    self.grad_delta2 = tf.gradients(ys=org_base_loss, xs=item_w2_noise)[0]
+                                elif self.noise_loss_ratio == 0:
+                                    self.grad_delta1 = tf.gradients(ys=org_base_loss, xs=item_w1_noise)[0]
+
+                            else:
+                                if self.noise_loss_ratio != 0 and self.noise_loss_ratio_W1 != 0:
+                                    self.grad_delta1 = tf.gradients(ys=base_loss, xs=item_w1_noise)[0]
+                                    self.grad_delta2 = tf.gradients(ys=base_loss, xs=item_w2_noise)[0]
+                                elif self.noise_loss_ratio_W1 == 0:
+                                    self.grad_delta2 = tf.gradients(ys=base_loss, xs=item_w2_noise)[0]
+                                elif self.noise_loss_ratio == 0:
+                                    self.grad_delta1 = tf.gradients(ys=base_loss, xs=item_w1_noise)[0]
+
+                            if self.noise_loss_ratio != 0 and self.noise_loss_ratio_W1 != 0:
+                                self.grad_delta_dense1 = tf.stop_gradient(self.grad_delta1)
+                                self.grad_delta_dense2 = tf.stop_gradient(self.grad_delta2)
+                                self.update_delta1 = item_w1_noise.assign(self.eps * self.grad_delta_dense1 / tf.norm(self.grad_delta_dense1))
+                                self.update_delta2 = item_w2_noise.assign(self.eps * self.grad_delta_dense2 / tf.norm(self.grad_delta_dense2))
+                                self.update_delta = self.update_delta1 + tf.transpose(self.update_delta2)
+
+                            elif self.noise_loss_ratio_W1 == 0:
+                                self.grad_delta_dense2 = tf.stop_gradient(self.grad_delta2)
+                                self.update_delta2 = item_w2_noise.assign(self.eps * self.grad_delta_dense2 / tf.norm(self.grad_delta_dense2))
+                                self.update_delta = self.update_delta2
+
+                            elif self.noise_loss_ratio == 0:
+                                self.grad_delta_dense1 = tf.stop_gradient(self.grad_delta1)
+                                self.update_delta1 = item_w1_noise.assign(self.eps * self.grad_delta_dense1 / tf.norm(self.grad_delta_dense1))
+                                self.update_delta = self.update_delta1
+
             print('Model Building Completed.')
 
 ############################################### Functions to run the model #############################################
@@ -565,28 +636,50 @@ class Adv_AE(object):
     def train(self, restore=False, save=False, restore_datafile=None, save_datafile=None):
 
         if restore: # Restore the model from checkpoint
+            self.session.run(tf.global_variables_initializer())
             self.restore_model(restore_datafile, verbose=True)
         else:
             self.session.run(tf.global_variables_initializer())
 
         if not save: # Do not save the model
-            self.eval_one_epoch(-1)
+            # self.session.run(tf.global_variables_initializer())
+            previous_metric1, previous_metric2 = self.eval_one_epoch(-1)
+            self.metric1.append(previous_metric1)
+            self.metric2.append(previous_metric2)
             for i in range(self.epochs):
                 self.train_one_epoch(i)
-                self.eval_one_epoch(i)
+                metric1, metric2 = self.eval_one_epoch(i)
+                self.metric1.append(metric1)
+                self.metric2.append(metric2)
 
         else: # Save the model while training
-            previous_metric1,_ = self.eval_one_epoch(-1)
-            # previous_metric1 = 0
+            # self.session.run(tf.global_variables_initializer())
+            previous_metric1,previous_metric2 = self.eval_one_epoch(-1)
+            self.metric1.append(previous_metric1)
+            self.metric2.append(previous_metric2)
+            previous_metric1 = 0
             for i in range(self.epochs):
                 self.train_one_epoch(i)
-                metric1,_ = self.eval_one_epoch(i)
-                if metric1 > previous_metric1:
-                    previous_metric1 = metric1
-                    self.save_model(save_datafile, verbose=False)
+                metric1,metric2 = self.eval_one_epoch(i)
+                self.metric1.append(metric1)
+                self.metric2.append(metric2)
+                # if i % self.save_T == 0:
+                #     self.save_model(save_datafile, verbose=True)
+                # if metric1 > previous_metric1:
+                #     previous_metric1 = metric1
+                if i == 500:
+                    self.save_model(save_datafile, verbose=True)
 
     # Save the model
     def save_model(self, datafile, verbose=False):
+        # if self.is_user_node:
+        #     save_var_dict = {'encoder_weights':self.layer1_w,'encoder_bias':self.layer1_b,
+        #                      'decoder_weights':self.layer2_w1,'decoder_bias':self.layer2_b,
+        #                      'user_embedding':self.user_embedding}
+        # else:
+        #     save_var_dict = {'encoder_weights': self.layer1_w, 'encoder_bias': self.layer1_b,
+        #                      'decoder_weights': self.layer2_w1, 'decoder_bias': self.layer2_b}
+
         saver = tf.train.Saver()
         path = saver.save(self.session, datafile)
         if verbose:
@@ -602,7 +695,9 @@ class Adv_AE(object):
     # Evaluate the model
     def evaluate(self, datafile):
         self.restore_model(datafile,True)
-        self.eval_one_epoch(-1)
+        metric1, metric2 = self.eval_one_epoch(-1)
+        self.metric1.append(metric1)
+        self.metric2.append(metric2)
 
 ########################################################################################################################
 

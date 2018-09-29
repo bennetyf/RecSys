@@ -118,6 +118,11 @@ def load_mat_as_matrix(datafile, opt='all'):
         return {key: sp.csr_matrix((raw[key][:,2],(raw[key][:,0],raw[key][:,1]))).tolil()
                 for key in raw if isinstance(raw[key],np.ndarray)}
 
+# Load matlab format data into numpy array format
+def load_mat_as_array(datafile):
+    raw = sio.loadmat(datafile)
+    return {key: raw[key] for key in raw if isinstance(raw[key], np.ndarray)}
+
 ########################################################################################################################
 
 # Save a numpy array into a csv file

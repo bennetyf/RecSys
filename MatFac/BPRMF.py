@@ -41,11 +41,11 @@ class BPRMF(object):
 
     def prepare_data(self,original_matrix, train_matrix, test_matrix):
         self.num_user, self.num_item = original_matrix.shape
-        self.train_uid, self.train_iid, self.train_labels = mtl.matrix_to_list(train_matrix)
+        self.train_uid, self.train_iid, _ = mtl.matrix_to_list(train_matrix)
         self.neg_dict, self.ranking_dict, self.test_dict = \
             mtl.negdict_mat(original_matrix, test_matrix, mod='precision', random_state=20)
         # self.neg_dict, self.ranking_dict, self.test_dict = mtl.negdict_mat(original_matrix, test_matrix, num_neg=self.num_ranking_neg)
-        self.num_training = len(self.train_labels)
+        self.num_training = len(self.train_uid)
         self.num_batch = int(self.num_training / self.batch_size)
         print("Data Preparation Completed.")
 
@@ -54,7 +54,6 @@ class BPRMF(object):
             self.uid = tf.placeholder(dtype=tf.int32, shape=[None], name='user_id')
             self.iid = tf.placeholder(dtype=tf.int32, shape=[None], name='item_id')
             self.neg_iid = tf.placeholder(dtype=tf.int32, shape=[None], name='neg_item_id')
-            self.labels = tf.placeholder(dtype=tf.float32, shape=[None], name='labels')
 
             # Latent factor matrices for users and items
             user_lf_matrix = tf.get_variable(name='user_latent_factors',
@@ -106,7 +105,7 @@ class BPRMF(object):
 
             _, l = self.session.run([self.opt, self.loss],
                                     feed_dict={ self.uid:batch_user,self.iid:batch_item,
-                                                self.neg_iid:batch_neg_iid,self.labels:batch_labels})
+                                                self.neg_iid:batch_neg_iid})
             n_batches += 1
             total_loss += l
 
