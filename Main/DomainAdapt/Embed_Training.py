@@ -1,4 +1,5 @@
 # Training user embeddings using AutoRec
+
 import sys, os
 sys.path.append('/share/scratch/fengyuan/Projects/RecSys/')
 os.environ["CUDA_VISIBLE_DEVICES"] = "5"
@@ -15,7 +16,7 @@ _filename = 'autorec.ckpt'
 _model_chkpath = ''
 _embedding_file_mat = 'Data/ML1M-ebd.mat'
 _embedding_file_excel = 'Data/ML1M-ebd.xlsx'
-_embedding_dim = 150
+_embedding_dim = 120
 
 def trainAutoRec(nepoch, ebd_gen = False):
     global _model_chkpath
@@ -54,12 +55,13 @@ def trainAutoRec(nepoch, ebd_gen = False):
         if ebd_gen:
             model.gen_embedding(datafile=_embedding_file_mat)
 
-def genEmbed(restore_file = _model_chkpath):
-    if not os.path.exists(restore_file):
+def genEmbed(restore_path):
+    print(restore_path)
+    if not os.path.exists(restore_path):
         print("[genEmbed]: Restore File Does Not Exist!")
         return
 
-    restore_file = restore_file + _filename
+    restore_file = restore_path + _filename
 
     gpu_options = tf.GPUOptions(allow_growth = True)
     with tf.Session(config=tf.ConfigProto(allow_soft_placement = True,
@@ -95,6 +97,5 @@ original_matrix, train_matrix, test_matrix = data['original'], data['train'], da
 
 ########################################################################################################################
 
-# trainAutoRec(nepoch=200)
-# print(_model_chkpath)
-genEmbed(restore_file = 'Embed/ML1M/AutoRec/embed_150/reg_1.0/20180921/')
+trainAutoRec(nepoch=200)
+genEmbed(restore_path = _model_chkpath)
